@@ -14,6 +14,17 @@
      ← ImageContent（模型真的看得见）
 ```
 
+## 直接下载部署
+
+不用 clone，下两个 zip 就行（[最新 release](https://github.com/heerxingen/astrbot_plugin_coopanion/releases/latest)）：
+
+| 文件 | 装到哪 | 怎么做 |
+|---|---|---|
+| `astrbot_plugin_coopanion-<版本>.zip` | AstrBot（服务器） | 解压到 `<AstrBot>/data/plugins/`，重启；或 Dashboard 插件页上传 |
+| `cortico-world-cua-<版本>.zip` | Coopanion（你的电脑） | 解压，设置 → 扩展 → 手动安装 → 本机目录 → 选 `cortico-world-cua` 文件夹 → 重启进程 → World 总览启用 |
+
+本地构建：`python scripts/build_dist.py` → 产物在 `dist/`。
+
 ## 它由两部分组成
 
 | 部分 | 位置 | 说明 |
