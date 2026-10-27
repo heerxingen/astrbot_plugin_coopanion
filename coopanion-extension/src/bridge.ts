@@ -30,6 +30,12 @@ export interface BridgeOptions {
   list: () => string[];
   /** Runs one tool; throws with a human-readable message when it is refused. */
   call: (name: string, args: Record<string, unknown>) => Promise<BridgeOutcome>;
+  /** Who is who, for the other end's prompt. */
+  identity: () => Record<string, unknown>;
+  /** Delivers a message from the other bot into the bot's session; optionally waits for the reply. */
+  chat: (text: string, waitMs: number) => Promise<{ delivered: boolean; reply: string; timedOut: boolean }>;
+  /** Messages the bot tried to send while the other side was away; drained by GET /v1/mailbox. */
+  mailbox: () => Array<{ ts: string; text: string }>;
   /** Host names answered, lower-case and without the port. Loopback by default; add the public name behind a tunnel. */
   hosts: () => string[];
   /** <dataDir>/cua/bridge.json — written on start, removed on stop. */
@@ -108,6 +114,38 @@ export class Bridge {
       json(res, 200, { ok: true, world: 'cua', port: this.bound, tools: this.opts.list() });
       return;
     }
+    if (req.method === 'GET' && url.pathname === '/v1/identity') {
+      json(res, 200, { ok: true, ...this.opts.identity() });
+      return;
+    }
+    if (req.method === 'GET' && url.pathname === '/v1/mailbox') {
+      json(res, 200, { ok: true, messages: this.opts.mailbox() });
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/chat') {
+      let body: { text?: unknown; waitMs?: unknown };
+      try {
+        body = JSON.parse(await readBody(req)) as { text?: unknown; waitMs?: unknown };
+      } catch {
+        json(res, 400, { ok: false, error: 'body is not JSON' });
+        return;
+      }
+      const text = typeof body.text === 'string' ? body.text : '';
+      const rawWait = typeof body.waitMs === 'number' && Number.isFinite(body.waitMs) ? body.waitMs : 0;
+      // An HTTP request may hold the connection for a while, but not forever.
+      const waitMs = Math.max(0, Math.min(120_000, Math.round(rawWait)));
+      if (!text.trim()) {
+        json(res, 400, { ok: false, error: 'text is required' });
+        return;
+      }
+      try {
+        const out = await this.opts.chat(text, waitMs);
+        json(res, 200, { ok: true, from: 'astrbot', ...out });
+      } catch (e) {
+        json(res, 200, { ok: false, error: e instanceof Error ? e.message : String(e) });
+      }
+      return;
+    }
     if (req.method === 'POST' && url.pathname === '/v1/tool') {
       let body: { name?: unknown; args?: unknown };
       try {
@@ -165,7 +203,12 @@ async function readBody(req: IncomingMessage): Promise<string> {
     if (size > BODY_MAX) throw new Error('body too large');
     chunks.push(chunk as Buffer);
   }
-  return Buffer.concat(chunks).toString('utf8');
+  const bytes = Buffer.concat(chunks);
+  // Decoding with replacement would store mojibake and blame nobody; refuse instead, so a caller
+  // that sent GBK (or otherwise not UTF-8) gets told rather than quietly garbling its message.
+  const text = bytes.toString('utf8');
+  if (Buffer.from(text, 'utf8').compare(bytes) !== 0) throw new Error('body is not UTF-8');
+  return text;
 }
 
 function json(res: ServerResponse, status: number, body: unknown): void {

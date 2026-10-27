@@ -1,6 +1,30 @@
 {
   "tools": [
     {
+      "name": "send_msg_to_astrbot",
+      "description": "给另一个 bot 发一条消息。它不在本机、用不了这台电脑的鼠标键盘，但能查资料、跑工具、回答问题。发完不会立刻拿到回复；它回的话会以【…】开头出现在你的对话里。",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "要发过去的话，一两句，把需要它做的事说清楚。"
+          }
+        },
+        "required": [
+          "message"
+        ]
+      },
+      "tags": [
+        "speak"
+      ],
+      "summary": {
+        "zh": "给隧道另一头的 AstrBot 发一条消息",
+        "en": "Send a message to AstrBot at the other end of the tunnel"
+      }
+    },
+    {
       "name": "cua_screenshot",
       "description": "看一眼使用者此刻的电脑屏幕：截一块显示器，画出鼠标指针的位置，并返回屏幕尺寸、指针坐标和前台窗口标题。之后的点击坐标都用这张截图的像素。读屏幕可能需要使用者在桌面的确认框里点一下同意；被拒绝就不要反复重试，等使用者开口。",
       "parameters": {

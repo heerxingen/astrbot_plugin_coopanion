@@ -110,3 +110,27 @@ node -e "const j=require('C:/Users/you/.coopanion/default/data/cua/bridge.json')
 | `421` | 走了反代但没把公网域名加进 `bridgeHosts` |
 | `401` | token 过期（Coopanion 重启过），重抄 |
 | 能连但很慢 | 每次截图都要传回 JPEG；把 `screenshot.maxWidth/Height/quality` 调小 |
+
+## 两个 bot 聊天时隧道的方向
+
+`@
+AstrBot ──HTTP──▶ 127.0.0.1:17901（隧道）──▶ Coo 的桥接        ← 已有，走 base + token
+Coo ──HTTP──▶ AstrBot 的 /api/plug/...                         ← 需要反向可达
+`@
+
+第二条（Coo 主动找 AstrBot）在只有"服务器 ← 你的 PC"这条隧道时是不通的：服务器没有公网入口。
+两种解法：
+
+1. **信箱（默认，零配置）**：`worlds.cua.chat.astrbotUrl` 留空，Coo 的消息进信箱，
+   AstrBot 按 `poll_seconds` 取。延迟就是一个轮询周期。
+2. **反向可达**：给 AstrBot 一个 Coo 能访问的地址（同样的隧道再来一条，或 AstrBot 本身有公网域名），
+   填进 `worlds.cua.chat.astrbotUrl`，例如
+   `https://your-host/api/plug/astrbot_plugin_coopanion/coo/message`，
+   再把 `worlds.cua.chat.token` 与插件里的 `coo_token` 填成一样。
+   注意插件这个路由要过 Dashboard 的鉴权中间件，实际可用性取决于你的部署方式——不确定就用信箱。
+
+## 编码
+
+桥接只收 UTF-8。用 curl 在 Windows 上手工测试时，命令行参数可能先被转成 GBK，
+结果就是"对方收到一堆乱码"——那不是链路的锅。用 Python / 插件发就没这个问题；
+真发了非 UTF-8，桥接会直接回 400 而不是把乱码存进会话。

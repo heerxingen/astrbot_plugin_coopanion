@@ -9,7 +9,7 @@
     "type": "string",
     "description": "远程部署时用：隧道/反代暴露给 AstrBot 的地址，可带路径前缀。留空则本机自动发现。",
     "default": "",
-    "hint": "例如 https://coopanion.example.com 或 https://example.com/coopanion"
+    "hint": "例如 http://127.0.0.1:17901"
   },
   "token": {
     "type": "string",
@@ -26,5 +26,22 @@
     "type": "float",
     "description": "单次调用超时（秒）。Coopanion 首次会弹确认框等用户点，别设太小。",
     "default": 60
+  },
+  "umo": {
+    "type": "string",
+    "description": "Coo 主动发来的消息投递到哪个会话（unified_msg_origin）。和任意会话说句话后可在 WebUI 会话列表里看到。",
+    "default": "",
+    "hint": "例如 aiocqhttp:FriendMessage:123456789"
+  },
+  "coo_token": {
+    "type": "string",
+    "description": "Coo 给本插件 POST 消息时用的口令，必须与 Coopanion 的 worlds.cua.chat.token 一致。留空则拒收。",
+    "default": "",
+    "secret": true
+  },
+  "poll_seconds": {
+    "type": "int",
+    "description": "多久去 Coopanion 取一次 Coo 主动发的消息（秒）。0 表示不轮询。",
+    "default": 30
   }
 }

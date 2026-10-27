@@ -157,6 +157,51 @@ class CoopanionClient:
             raise CoopanionError(f"Coopanion 回了意料之外的内容：{str(out)[:200]}")
         return out
 
+    async def chat(self, text: str, wait_ms: int = 0) -> dict[str, Any]:
+        """把一条消息送进 Coo 的会话；wait_ms > 0 时等它这一轮说完，拿回回复文本。"""
+        base_url, token = self._discover()
+        body = {"text": text, "waitMs": int(wait_ms)}
+        # The wait happens inside Coopanion's turn; give the HTTP client room beyond it.
+        timeout = self.timeout + max(0, wait_ms) / 1000 + 10
+        async with httpx.AsyncClient(timeout=timeout, verify=self._verify) as client:
+            try:
+                resp = await client.post(
+                    base_url + "/v1/chat",
+                    content=json.dumps(body).encode("utf-8"),
+                    headers={"content-type": "application/json", "authorization": f"Bearer {token}"},
+                )
+            except httpx.TimeoutException as e:
+                raise CoopanionError("Coo 没有在等待时间内说完这一轮（可能还在思考或调用工具）。") from e
+            except httpx.HTTPError as e:
+                raise CoopanionError(f"与 Coopanion 的连接中断（{base_url}）：{type(e).__name__} {e}") from e
+        if resp.status_code == 401:
+            raise CoopanionError("桥接令牌不对（401）。重启一次 Coopanion 让它重写 cua/bridge.json，再重启 AstrBot。")
+        if resp.status_code >= 400:
+            raise CoopanionError(f"Coopanion 返回 {resp.status_code}：{resp.text[:300]}")
+        out = resp.json()
+        if not out.get("ok"):
+            raise CoopanionError(str(out.get("error") or "Coopanion 拒绝了这条消息"))
+        return out
+
+    async def mailbox(self) -> list[dict[str, Any]]:
+        """取走 Coo 在 AstrBot 不在时留下的消息。"""
+        base_url, token = self._discover()
+        async with httpx.AsyncClient(timeout=10.0, verify=self._verify) as client:
+            resp = await client.get(base_url + "/v1/mailbox", headers={"authorization": f"Bearer {token}"})
+        if resp.status_code >= 400:
+            raise CoopanionError(f"Coopanion 返回 {resp.status_code}：{resp.text[:200]}")
+        out = resp.json()
+        return list(out.get("messages") or [])
+
+    async def identity(self) -> dict[str, Any]:
+        """名字与能力：谁是谁、Coo 能不能主动发消息。"""
+        base_url, token = self._discover()
+        async with httpx.AsyncClient(timeout=10.0, verify=self._verify) as client:
+            resp = await client.get(base_url + "/v1/identity", headers={"authorization": f"Bearer {token}"})
+        if resp.status_code >= 400:
+            raise CoopanionError(f"Coopanion 返回 {resp.status_code}：{resp.text[:200]}")
+        return resp.json()
+
     async def alive(self) -> dict[str, Any]:
         """探活：GET /v1/health。"""
         base_url, token = self._discover()

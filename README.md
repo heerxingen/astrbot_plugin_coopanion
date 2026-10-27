@@ -71,8 +71,42 @@ Coopanion 设置 → **扩展** → 手动安装 → **本机目录** → 选这
 | `coopanion_type` | 在当前焦点输入文字（中文可用，与输入法无关） | ❌ |
 | `coopanion_key` | 组合键，如 `ctrl+s`、`alt+f4` | ❌ |
 | `coopanion_focus` | 把窗口切到前台 | ❌ |
+| `send_msg_to_coo` | 给 Coo 发一条消息（Coo 是用户电脑上的桌宠） | ❌ |
 
 坐标语义：**永远是最近一次 `coopanion_screen` 的像素**。
+
+## 两个 bot 聊天
+
+Coo 在用户的电脑上，AstrBot 在服务器上，中间是隧道。两边各有一个工具：
+
+| 方向 | 工具 | 行为 |
+|---|---|---|
+| AstrBot → Coo | `send_msg_to_coo` | 直接送进 Coo 的会话（正文带 `【AstrBot】` 前缀）。发完就返回，不编造回答。 |
+| Coo → AstrBot | `send_msg_to_astrbot` | Coo 发信回来；有直连地址就 POST 到插件的 webhook，没有就进信箱，插件定时取 |
+
+AstrBot 收到 Coo 的话之后：
+
+- 配了 `umo` 时，会直接在那个会话里以「`Coo：…`」发出来；
+- 同时挂进下一次请求的 user 内容（`<from_coo>…</from_coo>`），模型一定看得到。
+
+**谁是谁**由 Coopanion 统一配置（设置 → CUA：
+
+| 键 | 作用 |
+|---|---|
+| `worlds.cua.names.coo` | 桌宠叫什么 |
+| `worlds.cua.names.astrbot` | 另一个 bot 叫什么 |
+| `worlds.cua.names.user` | 坐在这台电脑前的人叫什么 |
+
+这些只影响 CUA 的提示词和工具描述；AstrBot 的展示名、Coopanion 本体都不变。插件启动时会从
+`GET /v1/identity` 读取这些名字，所以两边说的是同一套称呼。
+
+对应的插件配置：
+
+| 配置项 | 说明 |
+|---|---|
+| `umo` | Coo 的消息投递到哪个会话（`unified_msg_origin`） |
+| `coo_token` | Coo POST 过来时的口令，与 `worlds.cua.chat.token` 一致；留空则拒收 |
+| `poll_seconds` | 多久取一次信箱（默认 30 秒，0 = 不轮询） |
 
 ## 权限
 

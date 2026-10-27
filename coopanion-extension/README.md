@@ -18,6 +18,7 @@
 | `cua_type` | 在当前焦点输入文字（中文可用，与输入法无关） | ❌ |
 | `cua_key` | 组合键，如 `ctrl+s`、`alt+f4`、`ctrl+a delete` | ❌ |
 | `cua_focus` | 把窗口切到前台 | ❌ |
+| `send_msg_to_astrbot` | 给隧道另一头的 AstrBot 发一条消息（**默认就有**，不受 `exposeToBot` 影响） | ❌ |
 
 引擎是 `scripts/cua.ps1`：每次调用起一个 PowerShell 进程，JSON 进 JSON 出。
 进程级 `SetProcessDpiAwarenessContext(-4)` 保证截图像素 = 物理像素，坐标可以直接拿去点击。
@@ -68,6 +69,10 @@ curl -s -H "Authorization: Bearer $(cat "<部署目录>/cua/bridge.json" | node 
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `enabled` | false | World 总览里的开关 |
+| `exposeToBot` | false | 是否把屏幕上那 6 个工具也给 Coo（默认只给桥接） |
+| `names.coo` / `names.astrbot` / `names.user` | Coo / AstrBot / 使用者 | 提示词与工具描述里怎么称呼这三个角色 |
+| `chat.astrbotUrl` | 空 | Coo 主动发消息的地址；留空时消息进信箱，由 AstrBot 轮询取走 |
+| `chat.token` | 空 | 与 AstrBot 插件 `coo_token` 一致的口令 |
 | `exposeToBot` | **false** | 也让 Coo 用这些工具；默认只有桥接能用，Coo 看不到这些工具 |
 | `bridgeHosts` | 127.0.0.1,localhost,[::1] | 桥接允许的 Host（反代时加公网域名，端口忽略） |
 | `ask` | ask-once | ask-each-command / ask-each-turn / ask-once / never-ask |
@@ -107,3 +112,19 @@ CI 会在它过期时失败。
 - macOS / Linux 引擎（`preflight` 会直接拒绝）。
 - `cua_zoom`（原分辨率重截一块）与 `cua_wait`。
 - 自动"动作后截图"：现在调用方要自己再截一次。
+
+## 两个 bot 聊天
+
+`@
+AstrBot ──/v1/chat──▶ Coo 的会话（正文带【AstrBot】前缀）
+Coo ──send_msg_to_astrbot──▶ AstrBot（直连 webhook，或进信箱等它来取）
+AstrBot ──/v1/mailbox──▶ 取回信箱里的消息
+`@
+
+- `GET /v1/identity`：`{coo, astrbot, user, canSendToAstrBot, tools, exposeToBot}`，AstrBot 启动时读一次。
+- `POST /v1/chat` `{"text": "...", "waitMs": 0}`：把话送进 Coo 的会话，正文自动加 `【AstrBot】`。
+  `waitMs > 0` 时顺便等它这一轮说完——但 Coo 通常会用 `send_msg_to_astrbot` 回信而不是产出正文，
+  所以**回信走信箱更稳**。
+- `GET /v1/mailbox`：取走 Coo 在 AstrBot 不在时留下的消息（取一次就清空）。
+
+身份只在本 World 生效：改 `worlds.cua.names.*` 不会改 AstrBot 的展示名，也不会改 Coopanion 本身。

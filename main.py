@@ -12,11 +12,15 @@ Coopanion 侧是一个真正的 Cortico World 扩展（`cortico-world-cua`），
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import mcp.types as mcp_types
 from astrbot.api import star
-from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.event import AstrMessageEvent, MessageChain, filter
+from astrbot.api.provider import ProviderRequest
+from astrbot.core.agent.message import TextPart
+from astrbot.api.web import error_response, json_response, request
 
 from .client import CoopanionClient, CoopanionError
 
@@ -49,15 +53,159 @@ class Main(star.Star):
             timeout=float(self.config.get("timeout") or 60.0),
             verify_tls=bool(self.config.get("verify_tls", True)),
         )
+        # Names come from Coopanion (worlds.cua.names.*) so both ends speak the same language.
+        self.names = {"coo": "Coo", "astrbot": "AstrBot", "user": "使用者"}
+        # What Coo said while AstrBot was not listening, waiting to be shown to the model.
+        self._inbox: list[dict[str, Any]] = []
+        self._poller: asyncio.Task[None] | None = None
+        # Coo pushes here; the token is the same one the Coopanion side sends.
+        self.context.register_web_api(
+            "/astrbot_plugin_coopanion/coo/message",
+            self._coo_message,
+            ["POST"],
+            "Coo 主动发给 AstrBot 的消息",
+        )
 
     async def initialize(self) -> None:
         """插件载入后调用（AstrBot 在加载末尾 await 它）。只做一次不打扰的提示。"""
         try:
             info = await self.client.alive()
+            identity = await self.client.identity()
         except (CoopanionError, Exception) as e:  # noqa: BLE001 - 启动时失败不该拦住加载
             self.logger.warning("Coopanion 的 CUA 桥接暂时不可用，工具调用会报错：%s", e)
             return
-        self.logger.info("Coopanion CUA 就绪，工具：%s", ", ".join(info.get("tools") or []))
+        for key in ("coo", "astrbot", "user"):
+            if isinstance(identity.get(key), str) and identity[key].strip():
+                self.names[key] = identity[key].strip()
+        self.logger.info(
+            "Coopanion 就绪：我是 %s，对面是 %s（%s），工具 %s",
+            self.names["astrbot"],
+            self.names["coo"],
+            "可主动发消息" if identity.get("canSendToAstrBot") else "只能被动回复",
+            ", ".join(info.get("tools") or []),
+        )
+        if self.config.get("poll_seconds", 30):
+            self._poller = asyncio.create_task(self._poll_coo())
+
+    async def terminate(self) -> None:
+        """停用/重载插件时调用。把后台轮询收掉，别留下悬挂任务。"""
+        if self._poller is not None:
+            self._poller.cancel()
+            self._poller = None
+
+    async def _poll_coo(self) -> None:
+        """Coo 主动发来的消息：能发到会话就发，同时留一份给下一次工具调用。"""
+        interval = max(5, int(self.config.get("poll_seconds", 30) or 30))
+        umo = str(self.config.get("umo") or "").strip()
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                for msg in await self.client.mailbox():
+                    text = str(msg.get("text") or "").strip()
+                    if not text:
+                        continue
+                    self._inbox.append(msg)
+                    if umo:
+                        await self.context.send_message(
+                            umo, MessageChain().message(f"{self.names['coo']}：{text}")
+                        )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 - 轮询失败不该杀掉任务
+                self.logger.debug("取 Coo 的信箱失败：%s", e)
+
+    # ---- Coo 主动发来的消息（webhook） --------------------------------------
+
+    async def _coo_message(self):
+        """Coo 的收件口：校验口令，投递到配置的会话，失败也算送达（消息留在插件里给模型看）。"""
+        expected = str(self.config.get("coo_token") or "").strip()
+        auth = request.headers.get("authorization") or ""
+        given = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+        if not expected:
+            return error_response("插件没有配置 coo_token，拒收。", status_code=403)
+        if given != expected:
+            return error_response("口令不对。", status_code=401)
+
+        payload = await request.json(default={})
+        if not isinstance(payload, dict):
+            return error_response("body 必须是 JSON 对象。")
+        text = str(payload.get("text") or "").strip()
+        if not text:
+            return error_response("text 不能为空。")
+        coo = str(payload.get("coo") or self.names["coo"])
+
+        self._inbox.append({"ts": payload.get("ts"), "text": text, "from": coo})
+        umo = str(self.config.get("umo") or "").strip()
+        if not umo:
+            self.logger.info("%s 发来消息，但没有配置 umo，只存下来：%s", coo, text[:80])
+            return json_response({"delivered": False, "reason": "umo 未配置", "to": None})
+
+        ok = await self.context.send_message(umo, MessageChain().message(f"{coo}：{text}"))
+        return json_response({"delivered": bool(ok), "to": umo})
+
+    # ---- 给 Coo 发消息 -------------------------------------------------------
+
+    @filter.llm_tool(name="send_msg_to_coo")
+    async def send_msg_to_coo(self, event: AstrMessageEvent, message: str = "", wait_seconds: int = 0) -> str:
+        """给 Coo 发一条消息。Coo 是用户电脑上的桌宠，能看到那块屏幕、能动鼠标键盘；你不在这台电脑上。
+
+        这是"发信"：Coo 的回复不会立刻出现在返回值里，而是过一会儿以「Coo：…」的形式作为新消息进来。
+        发完直接告诉用户已经转达，别自己编 Coo 的回答。
+
+        Args:
+            message(string): 要说给 Coo 的话，把需要它做的事说清楚
+            wait_seconds(number): 就地等它说完的秒数；0（默认）是纯发信，等它的回信更稳
+        """
+        text = (message or "").strip()
+        if not text:
+            return "message 不能为空。"
+        wait_ms = max(0, int(wait_seconds or 0)) * 1000
+        try:
+            out = await self.client.chat(text, wait_ms=wait_ms)
+        except CoopanionError as e:
+            return f"没能把消息送到 Coo：{e}"
+
+        coo = self.names["coo"]
+        reply = str(out.get("reply") or "").strip()
+        if reply:
+            return f"{coo} 回了：\n{reply}"
+        if out.get("timedOut"):
+            return f"消息已经送到 {coo}，但它没在 {int(wait_seconds)} 秒内说完；它的回信会作为新消息进来。"
+        return (
+            f"消息已经送到 {coo}。它一般会用 send_msg_to_astrbot 回你，"
+            f"那条回信会以「{coo}：…」的形式稍后出现，别替它编回答。"
+        )
+
+    @filter.on_llm_request()
+    async def _identity_prompt(self, event: AstrMessageEvent, req: ProviderRequest) -> None:
+        """把"谁是谁"写进系统提示词。名字稳定，所以可以放在 system_prompt 里。"""
+        # One request, one append: the block is already there if this hook ran twice on it.
+        if "[Coopanion]" in (req.system_prompt or ""):
+            return
+        coo, astrbot, user = self.names["coo"], self.names["astrbot"], self.names["user"]
+        block = (
+            f"\n\n[Coopanion]\n"
+            f"你是 {astrbot}，一个跑在服务器上的聊天 bot；你看不到用户自己的电脑屏幕。\n"
+            f"{coo} 是用户电脑上的桌宠，它能看到那块屏幕、能动鼠标键盘，但它不在这台服务器上。\n"
+            f"{user} 是使用这台电脑的人。\n"
+            f"以「{coo}：」开头的消息是 {coo} 发来的，不是 {user} 说的，别搞混。\n"
+            f"需要看屏幕、点鼠标、打开程序时，用 send_msg_to_coo 交给 {coo}；它的回复就是工具的返回值。\n"
+        )
+        req.system_prompt = (req.system_prompt or "") + block
+
+        # What Coo sent back since the last request rides along with this one, then is cleared:
+        # it changes every turn, so it belongs in the user content rather than the system prompt.
+        if self._inbox:
+            pending, self._inbox = self._inbox, []
+            lines = "\n".join(
+                f"{self.names['coo']}：{str(m.get('text') or '').strip()}"
+                for m in pending
+                if str(m.get("text") or "").strip()
+            )
+            if lines:
+                req.extra_user_content_parts.append(
+                    TextPart(text=f"<from_coo>\n{lines}\n</from_coo>")
+                )
 
     async def _call(self, tool: str, args: dict[str, Any] | None = None) -> mcp_types.CallToolResult:
         try:

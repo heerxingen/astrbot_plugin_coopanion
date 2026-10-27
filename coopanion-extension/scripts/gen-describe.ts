@@ -9,9 +9,9 @@
  */
 import { writeFileSync } from 'node:fs';
 import { CUA_SUMMARIES } from '../src/definition.ts';
-import { CUA_TOOL_SPECS } from '../src/world.ts';
+import { CHAT_TOOL_SPEC, CUA_TOOL_SPECS } from '../src/world.ts';
 
-const tools = CUA_TOOL_SPECS.map(({ name, description, parameters, tags }) => ({
+const tools = [CHAT_TOOL_SPEC, ...CUA_TOOL_SPECS].map(({ name, description, parameters, tags }) => ({
   name,
   description,
   parameters,

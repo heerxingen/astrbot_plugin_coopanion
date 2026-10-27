@@ -16,6 +16,13 @@ import type { Language } from 'cortico/core/language.ts';
 import { CUA_CONFIG_GROUP, CUA_DEFAULTS, CUA_ID, type AskLevel, type CuaConfigSection } from './config.ts';
 import { askDesktop, CuaFailure, runCua, type ScreenInfo, type ShotResult, type WindowEntry } from './engine.ts';
 import { Bridge, type BridgeOutcome } from './bridge.ts';
+import { fileURLToPath } from 'node:url';
+import type { OutputTap } from 'cortico/core/types.ts';
+
+/** What `OutputTap.onEvent` receives; the type itself is not exported by the framework. */
+type StreamEvent = Parameters<OutputTap['onEvent']>[0];
+
+const ENV_PROMPT_FILE = fileURLToPath(new URL('./ENV_PROMPT.md', import.meta.url));
 
 /** How long the person gets before a question counts as a refusal. */
 export const ASK_TIMEOUT_MS = 60_000;
@@ -99,6 +106,21 @@ export const CUA_TOOL_SPECS: ToolSpec[] = [
   },
 ];
 
+/** The chat tool's static shape; the instance rewrites the description with the configured names. */
+export const CHAT_TOOL_SPEC: ToolSpec = {
+  name: 'send_msg_to_astrbot',
+  tags: ['speak'],
+  description:
+    '给另一个 bot 发一条消息。它不在本机、用不了这台电脑的鼠标键盘，但能查资料、跑工具、回答问题。' +
+    '发完不会立刻拿到回复；它回的话会以【…】开头出现在你的对话里。',
+  parameters: {
+    type: 'object',
+    additionalProperties: false,
+    properties: { message: { type: 'string', description: '要发过去的话，一两句，把需要它做的事说清楚。' } },
+    required: ['message'],
+  },
+};
+
 export interface CuaWorldOptions {
   /** `worlds.cua` live reference: hot keys are read at use. */
   cfg: CuaConfigSection;
@@ -123,6 +145,14 @@ export class CuaWorld implements World {
   private pendingAsk: Promise<'yes' | 'no' | 'timeout'> | null = null;
   /** A refusal inside a bot turn sticks until that turn ends; a bridge call gets a fresh question. */
   private refusedThisTurn = false;
+  /** Text the bot is currently writing, so a message from the other bot can be answered in place. */
+  private tapText = '';
+  /** Whether deltas were seen this turn; a finished item must not add the same text again. */
+  private tapDelta = false;
+  /** Callers waiting for the bot to finish its current turn (the bridge's `waitMs`). */
+  private readonly replyWaiters: Array<(text: string) => void> = [];
+  /** What the bot said to the other side while it was not listening: AstrBot drains this. */
+  private readonly outbox: Array<{ ts: string; text: string }> = [];
 
   constructor(private readonly opts: CuaWorldOptions) {}
 
@@ -130,6 +160,11 @@ export class CuaWorld implements World {
     this.turnGranted = false;
     this.pendingAsk = null;
     this.refusedThisTurn = false;
+    // The bot just finished speaking: hand the text to whoever is waiting (the bridge's waitMs).
+    const text = this.tapText.trim();
+    this.tapText = '';
+    this.tapDelta = false;
+    if (this.replyWaiters.length) for (const resolve of this.replyWaiters.splice(0)) resolve(text);
   }
 
   onHandoffEnded(): void {
@@ -140,6 +175,128 @@ export class CuaWorld implements World {
 
   private get cfg(): CuaConfigSection {
     return this.opts.cfg;
+  }
+
+  /** Who is who, as this World's prompt and tool texts say it. Nothing outside CUA is renamed. */
+  names(): { coo: string; astrbot: string; user: string } {
+    const n = this.cfg.names;
+    return {
+      coo: (n?.coo || this.opts.botName || 'Coo').trim(),
+      astrbot: (n?.astrbot || 'AstrBot').trim(),
+      user: (n?.user || '使用者').trim(),
+    };
+  }
+
+  /**
+   * The main session's output stream: this is how a message from the other bot can carry the
+   * reply back in the same call instead of leaving the caller to poll.
+   */
+  outputTap(): OutputTap | undefined {
+    return {
+      onEvent: (event: StreamEvent) => {
+        // Two shapes reach here, depending on the provider: streamed deltas, or a finished
+        // message item. Take text from whichever arrives, and never twice for the same round.
+        if (event.type === 'response.output_text.delta') {
+          const delta = (event as unknown as { delta?: unknown }).delta;
+          if (typeof delta === 'string') {
+            this.tapText += delta;
+            this.tapDelta = true;
+          }
+          return;
+        }
+        if (event.type === 'response.output_item.done') {
+          const item = (event as unknown as { item?: { type?: string; content?: unknown } }).item;
+          if (!item || item.type !== 'message' || !Array.isArray(item.content)) return;
+          const text = (item.content as Array<{ type?: string; text?: unknown }>)
+            .filter((part) => part?.type === 'output_text' && typeof part.text === 'string')
+            .map((part) => part.text as string)
+            .join('');
+          // Providers that streamed deltas already gave us this text.
+          if (text && !this.tapDelta) this.tapText += text;
+        }
+      },
+      // A turn has several rounds (tool loop); only the turn's end means the bot has finished
+      // speaking. Resolving per round would return an empty reply from the first tool round.
+      onAbort: () => {
+        this.tapText = '';
+        for (const resolve of this.replyWaiters.splice(0)) resolve('');
+      },
+    };
+  }
+
+  /** Waits for the bot to finish a turn; '' when nothing came before the deadline. */
+  private waitForReply(ms: number): Promise<string> {
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (text: string): void => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve(text);
+      };
+      const timer = setTimeout(() => finish(''), ms);
+      this.replyWaiters.push(finish);
+    });
+  }
+
+  /** A message from the other bot: it enters Coo's session like any other event. */
+  async receiveFromAstrBot(text: string, waitMs: number): Promise<{ delivered: boolean; reply: string; timedOut: boolean }> {
+    const host = this.host;
+    if (!host) throw new CuaFailure('World 没有挂载，收不到消息。');
+    const { astrbot } = this.names();
+    const body = text.trim();
+    if (!body) throw new CuaFailure('消息是空的。');
+    // Start waiting *before* the event goes in: delivering it can start the turn immediately, and
+    // a waiter registered afterwards would miss the end of that very turn.
+    const pending = waitMs > 0 ? this.waitForReply(waitMs) : null;
+    // The sender is spelled out in the body, so the bot never has to guess who is talking.
+    await host.pushEvent({
+      type: 'cua.message',
+      ts: new Date().toISOString(),
+      source: this.id,
+      text: '【' + astrbot + '】' + body,
+      senderKey: 'astrbot',
+      meta: { from: 'astrbot' },
+    });
+    if (!pending) return { delivered: true, reply: '', timedOut: false };
+    const reply = await pending;
+    return { delivered: true, reply, timedOut: reply === '' };
+  }
+
+  /** Drains what the bot said to AstrBot since the last call. */
+  drainOutbox(): Array<{ ts: string; text: string }> {
+    return this.outbox.splice(0, this.outbox.length);
+  }
+
+  /** Coo speaking first: a plain POST to the AstrBot plugin, which owns the other end. */
+  async sendToAstrBot(text: string): Promise<string> {
+    const url = (this.cfg.chat?.astrbotUrl ?? '').trim();
+    const body = text.trim();
+    if (!body) return '[send_msg_to_astrbot] message 不能为空。';
+    if (!url) {
+      // No address to push to: park it in the outbox, which AstrBot drains on its next call.
+      this.outbox.push({ ts: new Date().toISOString(), text: body });
+      return '已放进 ' + this.names().astrbot + ' 的信箱，它下次来找你时会看到。';
+    }
+    const { coo, user } = this.names();
+    const token = (this.cfg.chat?.token ?? '').trim();
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(token ? { authorization: 'Bearer ' + token } : {}),
+        },
+        body: JSON.stringify({ from: 'coo', coo, user, text: body, ts: new Date().toISOString() }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) return '发给 ' + this.names().astrbot + ' 失败：HTTP ' + res.status + ' ' + (await res.text()).slice(0, 160);
+      const out = (await res.json().catch(() => ({}))) as { delivered?: unknown; to?: unknown };
+      if (out.delivered === false) return '消息到了 ' + this.names().astrbot + ' 那边，但没有投递成功（可能没配置会话）。';
+      return '已发给 ' + this.names().astrbot + (typeof out.to === 'string' ? '（会话 ' + out.to + '）' : '') + '。';
+    } catch (e) {
+      return '发给 ' + this.names().astrbot + ' 失败：' + (e instanceof Error ? e.message : String(e));
+    }
   }
 
   private askLevel(): AskLevel {
@@ -234,6 +391,10 @@ export class CuaWorld implements World {
         const out = await this.run<{ ok: boolean; foreground?: string }>('focus', { window }, signal);
         return { text: out.ok ? '已切到前台：' + (out.foreground || window) : '没能把「' + window + '」切到前台。', failed: out.ok ? undefined : true };
       }
+      case 'send_msg_to_astrbot': {
+        const message = typeof args.message === 'string' ? args.message : '';
+        return { text: await this.sendToAstrBot(message) };
+      }
       default:
         throw new CuaFailure('没有这个工具：' + name);
     }
@@ -244,12 +405,29 @@ export class CuaWorld implements World {
    * tools belong to the bridge (AstrBot), and Coo never sees them in its tool table.
    */
   tools(): ToolDef[] {
-    if (!this.cfg.exposeToBot) return [];
-    return CUA_TOOL_SPECS.map((spec) => ({
+    const { astrbot } = this.names();
+    // Talking to the other bot is always on: it is this World's reason to exist even when the
+    // screen tools stay off.
+    const chat: ToolDef = {
+      ...CHAT_TOOL_SPEC,
+      description:
+        '给另一个 bot「' + astrbot + '」发一条消息。' + astrbot + ' 不在本机，用不了这台电脑的鼠标和键盘，' +
+        '但它能查资料、跑工具、回答你问它的问题。它回的话会以「【' + astrbot + '】」开头出现在你的对话里。' +
+        '发完不会立刻拿到回复；把它当"发信"，不是"对话"。',
+      parameters: {
+        ...CHAT_TOOL_SPEC.parameters,
+        properties: { message: { type: 'string', description: '要发给 ' + astrbot + ' 的话，一两句，把需要它做的事说清楚。' } },
+      },
+      handler: async (args: Record<string, unknown>) => ({
+        text: await this.sendToAstrBot(typeof args.message === 'string' ? args.message : ''),
+      }),
+    };
+    if (!this.cfg.exposeToBot) return [chat];
+    return [chat, ...CUA_TOOL_SPECS.map((spec) => ({
       ...spec,
       interruptible: true,
-      handler: (args, ctx: ToolCallContext) => this.call(spec.name, args, ctx.signal),
-    }));
+      handler: (args: Record<string, unknown>, ctx: ToolCallContext) => this.call(spec.name, args, ctx.signal),
+    }))];
   }
 
   async bridgeCall(name: string, args: Record<string, unknown>): Promise<BridgeOutcome> {
@@ -264,17 +442,37 @@ export class CuaWorld implements World {
     };
   }
 
-  /** Nothing enters the bot's system prompt while it does not get the tools. */
+  /**
+   * The identity block: who you are, who the person is, who the other bot is, and which messages
+   * come from whom. Written for the model, not for the person.
+   */
   envPromptVars(): Record<string, string> {
-    if (!this.cfg.exposeToBot) return {};
-    const level = this.askLevel();
-    const port = this.bridge?.port ?? this.cfg.port;
+    const { coo, astrbot, user } = this.names();
+    const canSend = !!(this.cfg.chat?.astrbotUrl ?? '').trim();
+    const chat = [
+      astrbot + ' 是另一个 bot，不在这台电脑上：它没有屏幕，也没有鼠标键盘。',
+      '【' + astrbot + '】开头的消息是 ' + astrbot + ' 发给你的；其它话都是 ' + user + ' 说的，别搞混。',
+      '要主动找 ' + astrbot + '，用 send_msg_to_astrbot：这是发信，不会立刻有回音。' +
+        (canSend
+          ? ''
+          : '（' + user + ' 没配直连地址，消息先放进 ' + astrbot + ' 的信箱，它下次来取。）') +
+        astrbot + ' 的回话会以【' + astrbot + '】开头进来。',
+    ].join('\n');
+    const cuaParts: string[] = [];
+    if (this.cfg.exposeToBot) {
+      const level = this.askLevel();
+      cuaParts.push(
+        '你也能看 ' + user + ' 的屏幕、动鼠标键盘（cua_* 工具）：坐标一律是最近一次 cua_screenshot 的像素，点之前先看一眼。',
+        (ASK_TEXT[level] ?? '') + (level === 'never-ask' ? '' : ' 被拒绝就别换写法重试，等 ' + user + ' 开口。'),
+      );
+      if (user) cuaParts.push('操作的是 ' + user + ' 自己的电脑，做完要说清楚你动了什么。');
+    }
     return {
-      'cua.ask': (ASK_TEXT[level] ?? '') + (level === 'never-ask' ? '' : ' 被拒绝就别换写法重试，等使用者开口。'),
-      'cua.bridge': this.bridge
-        ? '本机的其他程序也可以调用这些工具（端口 ' + port + '，令牌在数据目录的 cua/bridge.json）。'
-        : '只有你能调用这些工具。',
-      'cua.screens': '坐标一律是最近一次 cua_screenshot 的像素；点之前先看一眼。',
+      'cua.coo': coo,
+      'cua.astrbot': astrbot,
+      'cua.user': user,
+      'cua.chat': chat,
+      'cua.cua': cuaParts.join('\n'),
     };
   }
 
@@ -301,6 +499,22 @@ export class CuaWorld implements World {
         { label: en ? 'Bridge port' : '桥接端口', value: this.bridge ? String(this.bridge.port) : '—', tone: this.bridge ? 'plain' : 'off' },
       ],
       config: [CUA_CONFIG_GROUP],
+      promptDocs: [{
+        key: 'worlds.cua.envPrompt',
+        title: en ? 'CUA · Environment prompt' : 'CUA · 环境提示词',
+        description: en
+          ? 'Who is who, and who can reach whom.'
+          : '谁是谁、谁能收到谁的消息。改这里就改了 Coo 对身份的理解。',
+        path: ENV_PROMPT_FILE,
+        role: 'envPrompt',
+        vars: [
+          { name: 'cua.coo', description: en ? 'The pet bot’s name.' : '桌宠的名字。' },
+          { name: 'cua.astrbot', description: en ? 'The other bot’s name.' : '另一个 bot 的名字。' },
+          { name: 'cua.user', description: en ? 'The person at this computer.' : '坐在这台电脑前的人。' },
+          { name: 'cua.chat', description: en ? 'Who may message whom, and how.' : '谁能给谁发消息、怎么发。' },
+          { name: 'cua.cua', description: en ? 'Screen and mouse rules, when the bot has them.' : '机器人有屏幕权限时的规则。' },
+        ],
+      }],
     };
   }
 
@@ -312,8 +526,22 @@ export class CuaWorld implements World {
     if (!this.cfg.bridge) return;
     const bridge = new Bridge({
       port: () => this.cfg.port ?? CUA_DEFAULTS.port,
-      list: () => CUA_TOOL_SPECS.map((t) => t.name),
+      list: () => [CHAT_TOOL_SPEC.name, ...CUA_TOOL_SPECS.map((t) => t.name)],
       call: (name, args) => this.bridgeCall(name, args),
+      mailbox: () => (this.cfg.chat?.astrbotUrl ?? '').trim() ? [] : this.drainOutbox(),
+      identity: () => {
+        const { coo, astrbot, user } = this.names();
+        return {
+          coo,
+          astrbot,
+          user,
+          // The other end can tell the model whether it may speak first.
+          canSendToAstrBot: !!(this.cfg.chat?.astrbotUrl ?? '').trim(),
+          tools: CUA_TOOL_SPECS.map((t) => t.name),
+          exposeToBot: !!this.cfg.exposeToBot,
+        };
+      },
+      chat: (text, waitMs) => this.receiveFromAstrBot(text, waitMs),
       hosts: () => (this.cfg.bridgeHosts || CUA_DEFAULTS.bridgeHosts).split(',').map((h) => h.trim().toLowerCase()).filter(Boolean),
       stateFile: this.stateFile(),
       log: host.log,

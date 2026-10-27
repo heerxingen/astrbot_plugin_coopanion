@@ -8,6 +8,25 @@ export const CUA_ID = 'cua';
 export const ASK_LEVELS = ['ask-each-command', 'ask-each-turn', 'ask-once', 'never-ask'] as const;
 export type AskLevel = (typeof ASK_LEVELS)[number];
 
+export interface CuaNames {
+  /** The pet bot's name; empty = the name the app is configured with (`displayName`). */
+  coo: string;
+  /** The other bot on the tunnel: AstrBot. */
+  astrbot: string;
+  /** The person at this computer; empty = "使用者". */
+  user: string;
+}
+
+export interface CuaChat {
+  /**
+   * AstrBot 插件的收件地址，例如 https://your-host/api/plug/astrbot_plugin_coopanion/coo/message。
+   * 留空时 Coo 只能被动回复（AstrBot 先说话），不能主动发。
+   */
+  astrbotUrl: string;
+  /** 两边共用的口令，随 Authorization: Bearer 发送。请与插件里的 coo_token 一致。 */
+  token: string;
+}
+
 export interface CuaConfigSection extends WorldSection {
   /**
    * Whether Coo itself gets these tools. Off by default: the World exists so that *another*
@@ -30,6 +49,13 @@ export interface CuaConfigSection extends WorldSection {
   bridgeHosts: string;
   /** Per-call wall clock for the PowerShell engine. */
   timeoutMs: number;
+  /**
+   * Names used in this World's own prompt and tool texts, so the two bots and the person never
+   * get mixed up. Nothing here renames AstrBot itself: it only affects what CUA says.
+   */
+  names: CuaNames;
+  /** How Coo reaches AstrBot when it wants to speak first. */
+  chat: CuaChat;
   screenshot: {
     maxWidth: number;
     maxHeight: number;
@@ -47,6 +73,8 @@ export const CUA_DEFAULTS: CuaConfigSection = {
   bridgeHosts: '127.0.0.1,localhost,[::1]',
   timeoutMs: 30_000,
   screenshot: { maxWidth: 1280, maxHeight: 800, quality: 75 },
+  names: { coo: '', astrbot: 'AstrBot', user: '' },
+  chat: { astrbotUrl: '', token: '' },
 };
 
 const K = `worlds.${CUA_ID}`;
@@ -83,6 +111,26 @@ export const CUA_CONFIG_GROUP: ConfigGroup = {
       [`${K}.bridge`]: {
         type: 'boolean', title: '允许本机其他程序调用', 'x-hot': true,
         description: '开启后本 World 会在 127.0.0.1 上开一个小 HTTP 服务,令牌文件 cua/bridge.json 只有你读得到。关掉就只剩 Coo 自己能调用这些工具。',
+      },
+      [`${K}.names.coo`]: {
+        type: 'string', title: '桌宠的名字', 'x-hot': true,
+        description: 'Coo 在提示词和对 AstrBot 的消息里被这样称呼。留空用应用里配的展示名。只影响本 World 的提示词。',
+      },
+      [`${K}.names.astrbot`]: {
+        type: 'string', title: '另一个 bot 的名字', 'x-hot': true,
+        description: '隧道另一头的 AstrBot 在提示词里叫什么。只影响本 World 的提示词。',
+      },
+      [`${K}.names.user`]: {
+        type: 'string', title: '使用者的名字', 'x-hot': true,
+        description: '坐着这台电脑的人。留空时叫「使用者」。只影响本 World 的提示词。',
+      },
+      [`${K}.chat.astrbotUrl`]: {
+        type: 'string', title: 'AstrBot 收件地址', 'x-hot': true,
+        description: 'Coo 主动给 AstrBot 发消息时 POST 的地址，形如 https://host/api/plug/astrbot_plugin_coopanion/coo/message。留空则 Coo 只能被动回复。',
+      },
+      [`${K}.chat.token`]: {
+        type: 'string', title: '与 AstrBot 的口令', 'x-hot': true,
+        description: '两边共用的口令，以 Authorization: Bearer 发送。与插件配置里的 coo_token 填一样。明文保存在 config.json。',
       },
       [`${K}.timeoutMs`]: {
         type: 'integer', title: '单次调用超时', minimum: 1000, maximum: 300000, 'x-suffix': 'ms', 'x-hot': true,
