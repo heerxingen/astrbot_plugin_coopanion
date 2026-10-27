@@ -68,11 +68,12 @@ API Key 在 AstrBot 的 **设置 → OpenAPI → 创建 API Key**，需要 `chat
 2. **信件的读取也要是 tool**：如果保留信箱，就再暴露一个 `check_coo_messages` /
    `read_from_astrbot` 之类的工具，由模型在需要时主动取；现在插件里那个
    `poll_seconds` 后台轮询**降级为可选**（默认关），只当兜底。
-3. **更好的做法：AstrBot 收到回信时在「开头」做提示词注入**。
-   用户原话："最好是 astrbot 端收到回信的时候可以在开头进行提示词注入"。
-   即 Coo 的回信不要像我第一版那样塞在 user content **末尾**的 `<from_coo>…</from_coo>`，
-   而是放在**本轮请求的开头**（system prompt 的身份段之后，或作为本轮 user 消息的前缀），
-   保证模型先看到"这是 Coo 说的话"，而不是读完用户内容才发现。
+3. **AstrBot 收到回信时，在「每次触发对话时」注入**（不是"放到开头"）。
+   用户澄清（23:16）："我的意思是做到每次触发对话时就注入，不是让放到开头的意思，你说的那个注入到末尾的就可以"。
+   即：注入位置用我现在这版 `extra_user_content_parts`（追加在本轮 user 内容之后）就行，
+   **关键是每轮都注入**——每次模型被触发（`on_llm_request`）都把尚未送出的 Coo 回信带进去，
+   而不是只在某次工具调用链里才出现。
+   要求：同一批消息只注入一次、注入后清空、空批次不要产生空的 `<from_coo>` 块。
 4. **同时支持互相轮询**：AstrBot ⇄ Coo 两个方向都要能主动拉/推，不依赖某一次同步调用碰巧成功。
 
 落到代码上（下一轮动手时）：
@@ -80,7 +81,8 @@ API Key 在 AstrBot 的 **设置 → OpenAPI → 创建 API Key**，需要 `chat
 - 扩展：`send_msg_to_astrbot` 保持 tool；`/v1/mailbox` 保留，但插件侧改成
   「模型调用 `check_coo_messages` 工具时才取」。
 - 插件：新增 `check_coo_messages` 工具（返回信箱内容，取一次清空）；
-  `_identity_prompt` 里把那批消息放到`请求开头`而不是 `extra_user_content_parts` 的末尾；
+  `_identity_prompt` 保持 `extra_user_content_parts`（本轮 user 内容之后）的写法，
+  但确保**每一轮请求都注入一次**、只注入一次、空批次不加空块；
   `poll_seconds` 默认 0。
 - 两个方向都保留"能推就推、推不到就拉"的能力。
 
