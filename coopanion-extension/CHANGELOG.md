@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1 — 2026-10-27
+
+### 变更
+
+- `send_msg_to_astrbot` 只写信箱，不再尝试 HTTP POST；删掉 `worlds.cua.chat.*` 两个配置。
+- 环境提示词模板里直接列出另一个 bot 的名字，并去掉与 `cua.chat` 重复的一行。
+
 ## 0.3.0 — 2026-10-27
 
 ### 新增

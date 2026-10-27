@@ -268,35 +268,16 @@ export class CuaWorld implements World {
     return this.outbox.splice(0, this.outbox.length);
   }
 
-  /** Coo speaking first: a plain POST to the AstrBot plugin, which owns the other end. */
+  /**
+   * Coo speaking first. The message goes into the outbox, which AstrBot drains with
+   * `GET /v1/mailbox` on its next poll — that direction needs no inbound port on this machine,
+   * which is what makes it work behind a one-way tunnel.
+   */
   async sendToAstrBot(text: string): Promise<string> {
-    const url = (this.cfg.chat?.astrbotUrl ?? '').trim();
     const body = text.trim();
     if (!body) return '[send_msg_to_astrbot] message 不能为空。';
-    if (!url) {
-      // No address to push to: park it in the outbox, which AstrBot drains on its next call.
-      this.outbox.push({ ts: new Date().toISOString(), text: body });
-      return '已放进 ' + this.names().astrbot + ' 的信箱，它下次来找你时会看到。';
-    }
-    const { coo, user } = this.names();
-    const token = (this.cfg.chat?.token ?? '').trim();
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          ...(token ? { authorization: 'Bearer ' + token } : {}),
-        },
-        body: JSON.stringify({ from: 'coo', coo, user, text: body, ts: new Date().toISOString() }),
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (!res.ok) return '发给 ' + this.names().astrbot + ' 失败：HTTP ' + res.status + ' ' + (await res.text()).slice(0, 160);
-      const out = (await res.json().catch(() => ({}))) as { delivered?: unknown; to?: unknown };
-      if (out.delivered === false) return '消息到了 ' + this.names().astrbot + ' 那边，但没有投递成功（可能没配置会话）。';
-      return '已发给 ' + this.names().astrbot + (typeof out.to === 'string' ? '（会话 ' + out.to + '）' : '') + '。';
-    } catch (e) {
-      return '发给 ' + this.names().astrbot + ' 失败：' + (e instanceof Error ? e.message : String(e));
-    }
+    this.outbox.push({ ts: new Date().toISOString(), text: body });
+    return '已放进 ' + this.names().astrbot + ' 的信箱，它下次来取。';
   }
 
   private askLevel(): AskLevel {
@@ -448,14 +429,10 @@ export class CuaWorld implements World {
    */
   envPromptVars(): Record<string, string> {
     const { coo, astrbot, user } = this.names();
-    const canSend = !!(this.cfg.chat?.astrbotUrl ?? '').trim();
     const chat = [
-      astrbot + ' 是另一个 bot，不在这台电脑上：它没有屏幕，也没有鼠标键盘。',
       '【' + astrbot + '】开头的消息是 ' + astrbot + ' 发给你的；其它话都是 ' + user + ' 说的，别搞混。',
-      '要主动找 ' + astrbot + '，用 send_msg_to_astrbot：这是发信，不会立刻有回音。' +
-        (canSend
-          ? ''
-          : '（' + user + ' 没配直连地址，消息先放进 ' + astrbot + ' 的信箱，它下次来取。）') +
+      astrbot + ' 没有屏幕，也没有鼠标键盘：要看屏幕、动鼠标，只能由你来做。',
+      '要主动找 ' + astrbot + '，用 send_msg_to_astrbot：消息会放进它的信箱，它下次来取，不会立刻有回音。' +
         astrbot + ' 的回话会以【' + astrbot + '】开头进来。',
     ].join('\n');
     const cuaParts: string[] = [];
@@ -528,15 +505,14 @@ export class CuaWorld implements World {
       port: () => this.cfg.port ?? CUA_DEFAULTS.port,
       list: () => [CHAT_TOOL_SPEC.name, ...CUA_TOOL_SPECS.map((t) => t.name)],
       call: (name, args) => this.bridgeCall(name, args),
-      mailbox: () => (this.cfg.chat?.astrbotUrl ?? '').trim() ? [] : this.drainOutbox(),
+      mailbox: () => this.drainOutbox(),
       identity: () => {
         const { coo, astrbot, user } = this.names();
         return {
           coo,
           astrbot,
           user,
-          // The other end can tell the model whether it may speak first.
-          canSendToAstrBot: !!(this.cfg.chat?.astrbotUrl ?? '').trim(),
+
           tools: CUA_TOOL_SPECS.map((t) => t.name),
           exposeToBot: !!this.cfg.exposeToBot,
         };

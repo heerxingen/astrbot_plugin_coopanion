@@ -1,47 +1,53 @@
 {
   "bridge_json": {
+    "description": "Coopanion 桥接文件",
     "type": "string",
-    "description": "本机部署时用：Coopanion 的 cua/bridge.json 路径（里面有端口和令牌）。远程部署留空。",
     "default": "",
-    "hint": "例如 C:\\Users\\you\\.coopanion\\default\\data\\cua\\bridge.json"
+    "hint": "同机部署时填 <Coopanion 部署目录>/data/cua/bridge.json 的完整路径，端口和令牌都在里面。",
+    "obvious_hint": true
   },
   "base": {
+    "description": "桥接地址",
     "type": "string",
-    "description": "远程部署时用：隧道/反代暴露给 AstrBot 的地址，可带路径前缀。留空则本机自动发现。",
     "default": "",
-    "hint": "例如 http://127.0.0.1:17901"
+    "hint": "AstrBot 在服务器上时填隧道地址，例如 http://127.0.0.1:17901。留空则从上面的文件读。",
+    "obvious_hint": true
   },
   "token": {
+    "description": "桥接令牌",
     "type": "string",
-    "description": "远程部署时用：本机 Coopanion 的 cua/bridge.json 里的 token（隧道尽头没有文件可读）。",
     "default": "",
-    "secret": true
+    "secret": true,
+    "hint": "远程部署时填 bridge.json 里的 token；同机部署留空即可。"
   },
   "verify_tls": {
+    "description": "校验 HTTPS 证书",
     "type": "bool",
-    "description": "校验 HTTPS 证书。只有用自签证书、且你清楚风险时才关。",
-    "default": true
+    "default": true,
+    "hint": "只有用自签证书、且你清楚风险时才关掉。"
   },
   "timeout": {
+    "description": "调用超时（秒）",
     "type": "float",
-    "description": "单次调用超时（秒）。Coopanion 首次会弹确认框等用户点，别设太小。",
-    "default": 60
+    "default": 60,
+    "hint": "Coopanion 首次会弹确认框等人点，别设太小。"
   },
   "umo": {
+    "description": "Coo 消息投递到的会话",
     "type": "string",
-    "description": "Coo 主动发来的消息投递到哪个会话（unified_msg_origin）。和任意会话说句话后可在 WebUI 会话列表里看到。",
     "default": "",
-    "hint": "例如 aiocqhttp:FriendMessage:123456789"
-  },
-  "coo_token": {
-    "type": "string",
-    "description": "Coo 给本插件 POST 消息时用的口令，必须与 Coopanion 的 worlds.cua.chat.token 一致。留空则拒收。",
-    "default": "",
-    "secret": true
+    "hint": "unified_msg_origin，例如 aiocqhttp:FriendMessage:123456。留空则只给模型看，不发到聊天里。",
+    "obvious_hint": true
   },
   "poll_seconds": {
+    "description": "取信间隔（秒）",
     "type": "int",
-    "description": "多久去 Coopanion 取一次 Coo 主动发的消息（秒）。0 表示不轮询。",
-    "default": 30
+    "default": 30,
+    "slider": {
+      "min": 5,
+      "max": 300,
+      "step": 5
+    },
+    "hint": "多久去 Coopanion 取一次 Coo 发来的消息。0 表示不轮询。"
   }
 }

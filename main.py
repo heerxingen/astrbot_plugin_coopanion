@@ -20,7 +20,6 @@ from astrbot.api import star
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.provider import ProviderRequest
 from astrbot.core.agent.message import TextPart
-from astrbot.api.web import error_response, json_response, request
 
 from .client import CoopanionClient, CoopanionError
 
@@ -58,13 +57,6 @@ class Main(star.Star):
         # What Coo said while AstrBot was not listening, waiting to be shown to the model.
         self._inbox: list[dict[str, Any]] = []
         self._poller: asyncio.Task[None] | None = None
-        # Coo pushes here; the token is the same one the Coopanion side sends.
-        self.context.register_web_api(
-            "/astrbot_plugin_coopanion/coo/message",
-            self._coo_message,
-            ["POST"],
-            "Coo 主动发给 AstrBot 的消息",
-        )
 
     async def initialize(self) -> None:
         """插件载入后调用（AstrBot 在加载末尾 await 它）。只做一次不打扰的提示。"""
@@ -78,10 +70,10 @@ class Main(star.Star):
             if isinstance(identity.get(key), str) and identity[key].strip():
                 self.names[key] = identity[key].strip()
         self.logger.info(
-            "Coopanion 就绪：我是 %s，对面是 %s（%s），工具 %s",
+            "Coopanion 就绪：我是 %s，对面是 %s，取信间隔 %s 秒，工具 %s",
             self.names["astrbot"],
             self.names["coo"],
-            "可主动发消息" if identity.get("canSendToAstrBot") else "只能被动回复",
+            self.config.get("poll_seconds", 30),
             ", ".join(info.get("tools") or []),
         )
         if self.config.get("poll_seconds", 30):
@@ -113,35 +105,6 @@ class Main(star.Star):
                 raise
             except Exception as e:  # noqa: BLE001 - 轮询失败不该杀掉任务
                 self.logger.debug("取 Coo 的信箱失败：%s", e)
-
-    # ---- Coo 主动发来的消息（webhook） --------------------------------------
-
-    async def _coo_message(self):
-        """Coo 的收件口：校验口令，投递到配置的会话，失败也算送达（消息留在插件里给模型看）。"""
-        expected = str(self.config.get("coo_token") or "").strip()
-        auth = request.headers.get("authorization") or ""
-        given = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
-        if not expected:
-            return error_response("插件没有配置 coo_token，拒收。", status_code=403)
-        if given != expected:
-            return error_response("口令不对。", status_code=401)
-
-        payload = await request.json(default={})
-        if not isinstance(payload, dict):
-            return error_response("body 必须是 JSON 对象。")
-        text = str(payload.get("text") or "").strip()
-        if not text:
-            return error_response("text 不能为空。")
-        coo = str(payload.get("coo") or self.names["coo"])
-
-        self._inbox.append({"ts": payload.get("ts"), "text": text, "from": coo})
-        umo = str(self.config.get("umo") or "").strip()
-        if not umo:
-            self.logger.info("%s 发来消息，但没有配置 umo，只存下来：%s", coo, text[:80])
-            return json_response({"delivered": False, "reason": "umo 未配置", "to": None})
-
-        ok = await self.context.send_message(umo, MessageChain().message(f"{coo}：{text}"))
-        return json_response({"delivered": bool(ok), "to": umo})
 
     # ---- 给 Coo 发消息 -------------------------------------------------------
 

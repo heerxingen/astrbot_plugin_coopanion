@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-10-27
+
+### Changed
+
+- Coo 主动找 AstrBot 只走信箱：删掉 `worlds.cua.chat.*` 与插件里的 webhook / `coo_token`。
+  AstrBot 的插件 Web API 挂在 Dashboard 鉴权后面，隧道另一头打不进来；信箱这一条不需要任何入站入口。
+- 插件配置项改成"短标题 + 悬浮说明"，不再把整句说明当标签（Dashboard 里会被截断）。
+
+### Fixed
+
+- CUA 环境提示词模板里现在直接写出另一个 bot 的名字，不再只藏在折叠的变量里；重复的一行也去掉了。
+
 ## [0.3.0] - 2026-10-27
 
 ### Added

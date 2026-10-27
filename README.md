@@ -90,17 +90,18 @@ Coopanion 设置 → **扩展** → 手动安装 → **本机目录** → 选这
 
 Coo 在用户的电脑上，AstrBot 在服务器上，中间是隧道。两边各有一个工具：
 
-| 方向 | 工具 | 行为 |
+| 方向 | 工具 | 怎么走 |
 |---|---|---|
-| AstrBot → Coo | `send_msg_to_coo` | 直接送进 Coo 的会话（正文带 `【AstrBot】` 前缀）。发完就返回，不编造回答。 |
-| Coo → AstrBot | `send_msg_to_astrbot` | Coo 发信回来；有直连地址就 POST 到插件的 webhook，没有就进信箱，插件定时取 |
+| AstrBot → Coo | `send_msg_to_coo` | 直接送进 Coo 的会话（正文带 `【AstrBot】` 前缀），发完就返回 |
+| Coo → AstrBot | `send_msg_to_astrbot` | 消息进 Coo 侧的信箱，插件每 `poll_seconds` 秒取一次 |
 
-AstrBot 收到 Coo 的话之后：
+Coo 这边的方向不需要 AstrBot 暴露任何接口：没有 webhook、没有入站端口，所以在只有一条隧道的
+部署里也能用（服务器不开放入口）。
 
-- 配了 `umo` 时，会直接在那个会话里以「`Coo：…`」发出来；
-- 同时挂进下一次请求的 user 内容（`<from_coo>…</from_coo>`），模型一定看得到。
+AstrBot 收到之后：配了 `umo` 就在那个会话里以「`Coo：…`」发出，同时挂进下一次请求的
+user 内容（`<from_coo>…</from_coo>`），模型一定看得到。
 
-**谁是谁**由 Coopanion 统一配置（设置 → CUA：
+**谁是谁**在 Coopanion 里统一配置（设置 → CUA）：
 
 | 键 | 作用 |
 |---|---|
@@ -108,16 +109,21 @@ AstrBot 收到 Coo 的话之后：
 | `worlds.cua.names.astrbot` | 另一个 bot 叫什么 |
 | `worlds.cua.names.user` | 坐在这台电脑前的人叫什么 |
 
-这些只影响 CUA 的提示词和工具描述；AstrBot 的展示名、Coopanion 本体都不变。插件启动时会从
-`GET /v1/identity` 读取这些名字，所以两边说的是同一套称呼。
+这些只影响 CUA 的提示词与工具描述；AstrBot 的展示名、Coopanion 本体都不变。插件启动时从
+`GET /v1/identity` 读同一套名字。
 
-对应的插件配置：
+插件配置：
 
 | 配置项 | 说明 |
 |---|---|
 | `umo` | Coo 的消息投递到哪个会话（`unified_msg_origin`） |
-| `coo_token` | Coo POST 过来时的口令，与 `worlds.cua.chat.token` 一致；留空则拒收 |
 | `poll_seconds` | 多久取一次信箱（默认 30 秒，0 = 不轮询） |
+
+### 想改 CUA 的环境提示词？
+
+Coopanion 设置里的「系统提示词」页可以编辑它（就是带 `cua.coo` / `cua.astrbot` /
+`cua.user` 变量的那份）。保存过一次之后，编辑器底部会出现**「重置为 World 自带版本」**，
+点它就能恢复默认——这个按钮是 Coopanion 自带的行为，只有在你覆盖过之后才显示。
 
 ## 权限
 
