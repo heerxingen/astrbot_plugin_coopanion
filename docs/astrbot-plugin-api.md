@@ -48,7 +48,7 @@ support_platforms / i18n / repo` 等）。
 
 ## 2. 注册 LLM 工具
 
-装饰器：`@filter.llm_tool(name="...")`（实现 `astrbot/core/star/register/star_handler.py:579-700`）。
+装饰器：```filter.llm_tool(name="...")`（实现 `astrbot/core/star/register/star_handler.py:579-700`）。
 
     @filter.llm_tool(name="coopanion_screen")
     async def coopanion_screen(self, event: AstrMessageEvent, display: int = 1):
@@ -135,7 +135,7 @@ AstrBot 自带 MCP 客户端，配置文件是 `data/mcp_server.json`：
    `functools.partial(raw_handler, star_cls)` 绑定，只有 `handler.__module__ ==
    data.plugins.<目录>.main` 才会走这条路径（`star_manager.py:1282-1306`）。
    写到子模块的方法不会被绑定，执行时 `event` 会错位。
-2. **@filter.llm_tool 必须带括号**（`@filter.llm_tool(name="x")`）。不带括号会把函数本身当工具名
+2. **@filter.llm_tool 必须带括号**（```filter.llm_tool(name="x")`）。不带括号会把函数本身当工具名
    （`register/star_handler.py:619,631`）。
 3. **docstring 的 Args 段是唯一参数来源**：Python 类型注解被忽略；docstring 里缺类型会让**插件 import 直接失败**
    （`star_handler.py:631-670`）。

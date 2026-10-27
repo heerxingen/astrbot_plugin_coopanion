@@ -1,15 +1,18 @@
 # astrbot_plugin_coopanion
 
+[![CI](https://github.com/heerxingen/astrbot_plugin_coopanion/actions/workflows/ci.yml/badge.svg)](https://github.com/heerxingen/astrbot_plugin_coopanion/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 > 让 AstrBot 的 bot **通过 Coopanion 看（并操作）你的电脑**：截图、列窗口、点击、输入、按键、聚焦。
 > 权限询问留在 Coopanion 桌面上的系统确认框里，不在插件里。
 
-`@
+```
 用户 → AstrBot 的模型 → coopanion_screen（工具）
      → 本插件 → 127.0.0.1:<port>/v1/tool（Bearer 令牌）
      → Coopanion（World 扩展「CUA」）→ 系统确认框「是/否」
      → PowerShell 截图/点击 → JPEG
      ← ImageContent（模型真的看得见）
-`@
+```
 
 ## 它由两部分组成
 
@@ -31,10 +34,10 @@ Coopanion 设置 → **扩展** → 手动安装 → **本机目录** → 选这
 
 启用后会出现一行桥接灯（`监听 127.0.0.1:17901`），并在部署目录写下：
 
-`@json
+```json
 // <部署目录>/data/cua/bridge.json
 {"port": 17901, "token": "…", "tools": ["cua_screenshot", "…"]}
-`@
+```
 
 找它的办法：`find "<Coopanion>\data\home" -name bridge.json`，或者看 Coopanion 的运行日志。
 
@@ -98,18 +101,39 @@ Coopanion 设置 → **扩展** → 手动安装 → **本机目录** → 选这
 | 一直没回执 | Coopanion 在等你点确认框；把 `timeout` 调大 |
 | 工具不出现 | 插件没加载（看 AstrBot 日志）或模型没开工具调用 |
 
+## 开发与测试
+
+```bash
+# 插件这一半（不需要 AstrBot 在跑）
+python -m py_compile main.py client.py
+python tests/smoke_client.py            # 对着假桥接验发现 / 令牌 / 回执 / 401
+
+# 扩展这一半（需要 Node 22）
+cd coopanion-extension
+npm ci
+npm run check        # tsc --noEmit + 重新生成 describe.json 并确认没有漂移
+```
+
+CI（`.github/workflows/ci.yml`）在 Windows runner 上跑同样的两件事，外加两个 `.ps1` 的语法解析。
+
 ## 目录
 
-`@
-astrbot_plugin_coopanion/     ← AstrBot 插件（仓库根）
-├── main.py                 6 个 LLM 工具
-├── client.py               bridge.json 发现 + HTTP 调用
+```
+astrbot_plugin_coopanion/        ← AstrBot 插件（仓库根）
+├── main.py                    6 个 LLM 工具
+├── client.py                  bridge.json 发现 + HTTP 调用
 ├── _conf_schema.json
-├── coopanion-extension/    ← 另一半：Coopanion World 扩展
+├── metadata.yaml
+├── requirements.txt
+├── tests/smoke_client.py      客户端离线冒烟
+├── coopanion-extension/       ← 另一半：Coopanion World 扩展
+│   ├── package.json           kind: world, api 6（cortico 作 devDependency）
+│   ├── describe.json          npm run describe 生成
 │   ├── src/{index,definition,config,world,bridge,engine}.ts
-│   └── scripts/{cua,ask}.ps1
-└── docs/                   调研与设计（Coopanion 接口、AstrBot 插件 API 的代码级事实）
-`@
+│   └── scripts/{cua,ask}.ps1, gen-describe.ts
+├── docs/                      调研与设计（Coopanion 接口、AstrBot 插件 API 的代码级事实）
+└── .github/workflows/ci.yml
+```
 
 ## 许可
 

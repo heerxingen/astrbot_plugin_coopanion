@@ -1,0 +1,161 @@
+{
+  "tools": [
+    {
+      "name": "cua_screenshot",
+      "description": "看一眼使用者此刻的电脑屏幕：截一块显示器，画出鼠标指针的位置，并返回屏幕尺寸、指针坐标和前台窗口标题。之后的点击坐标都用这张截图的像素。读屏幕可能需要使用者在桌面的确认框里点一下同意；被拒绝就不要反复重试，等使用者开口。",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "display": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "显示器序号，1 是左起第一块；不确定就用 1。"
+          }
+        }
+      },
+      "tags": [
+        "read"
+      ],
+      "summary": {
+        "zh": "截一块显示器，附指针位置与前台窗口标题",
+        "en": "Capture one display with the pointer position and foreground window title"
+      }
+    },
+    {
+      "name": "cua_windows",
+      "description": "列出使用者屏幕上可见的顶层窗口：标题、进程 pid、所在位置与大小、是否最小化、哪个在前台。",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      },
+      "tags": [
+        "read"
+      ],
+      "summary": {
+        "zh": "列出可见的顶层窗口",
+        "en": "List the visible top-level windows"
+      }
+    },
+    {
+      "name": "cua_click",
+      "description": "把鼠标移到截图的 (x, y) 并点击。点之前先 cua_screenshot 看一眼，确认坐标落在真的控件上。",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "x": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "横坐标（截图像素）"
+          },
+          "y": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "纵坐标（截图像素）"
+          },
+          "button": {
+            "type": "string",
+            "enum": [
+              "left",
+              "right",
+              "middle"
+            ],
+            "description": "默认 left"
+          },
+          "clicks": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3,
+            "description": "1 单击、2 双击、3 三击"
+          }
+        },
+        "required": [
+          "x",
+          "y"
+        ]
+      },
+      "tags": [
+        "act"
+      ],
+      "summary": {
+        "zh": "把鼠标移到某处并点击",
+        "en": "Move the mouse to a point and click"
+      }
+    },
+    {
+      "name": "cua_type",
+      "description": "在当前输入焦点输入文字（中文也行，与输入法状态无关；换行按一次回车）。输入前先点一下要输入的框。",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "要输入的文字"
+          }
+        },
+        "required": [
+          "text"
+        ]
+      },
+      "tags": [
+        "act"
+      ],
+      "summary": {
+        "zh": "在当前输入焦点输入文字",
+        "en": "Type text at the current input focus"
+      }
+    },
+    {
+      "name": "cua_key",
+      "description": "按一个键或组合键。组合键用 + 连，先后按用空格分开，例如 \"ctrl+s\"、\"alt+f4\"、\"ctrl+a delete\"。",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "keys": {
+            "type": "string",
+            "description": "键名组合"
+          }
+        },
+        "required": [
+          "keys"
+        ]
+      },
+      "tags": [
+        "act"
+      ],
+      "summary": {
+        "zh": "按一个键或组合键",
+        "en": "Press a key or a key combination"
+      }
+    },
+    {
+      "name": "cua_focus",
+      "description": "把某个窗口切到前台（最小化的先还原）。window 用 cua_windows 给的 handle，或标题的一部分。",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "window": {
+            "type": "string",
+            "description": "窗口 handle（0x...）或标题片段"
+          }
+        },
+        "required": [
+          "window"
+        ]
+      },
+      "tags": [
+        "act"
+      ],
+      "summary": {
+        "zh": "把一个窗口切到前台",
+        "en": "Bring a window to the foreground"
+      }
+    }
+  ],
+  "events": []
+}

@@ -35,14 +35,18 @@
     "scripts",
     "assets",
     "README.md",
+    "CHANGELOG.md",
     "describe.json"
   ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "describe": "tsx scripts/gen-describe.ts",
+    "check": "npm run typecheck && npm run describe && git diff --exit-code -- describe.json"
+  },
   "devDependencies": {
-    "@types/node": "^22.20.4",
+    "@types/node": "^22.20.5",
+    "cortico": "0.2.8",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3"
-  },
-  "scripts": {
-    "typecheck": "tsc --noEmit"
   }
 }

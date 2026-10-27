@@ -35,22 +35,22 @@
 `worlds.cua.bridge` 打开时（默认开），World 启动即在 `127.0.0.1:<port>` 上起服务，
 并把**实际端口和令牌**写进部署目录的 `cua/bridge.json`（权限 0600）：
 
-`@json
+```json
 { "port": 17901, "token": "…", "tools": ["cua_screenshot", "…"] }
-`@
+```
 
 `port` 被占用会顺延（最多试 10 个），所以**永远从文件里读端口**，别写死。
 
-`@
+```
 GET  /v1/health              -> {"ok":true,"world":"cua","port":17901,"tools":[…]}
 POST /v1/tool  {"name":"cua_screenshot","args":{"display":1}}
      -> {"ok":true,"failed":false,"text":"屏幕 1（…）","blobs":[{"mime":"image/jpeg","base64":"…"}]}
-`@
+```
 
-`@bash
+```bash
 curl -s -H "Authorization: Bearer $(cat "<部署目录>/cua/bridge.json" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).token))")" \
      http://127.0.0.1:17901/v1/health
-`@
+```
 
 ## 安全边界
 
@@ -82,7 +82,20 @@ curl -s -H "Authorization: Bearer $(cat "<部署目录>/cua/bridge.json" | node 
 | 真实桥接：health / 401 / 截图 / 列窗口 | ✅ 本机实测（ask-once 弹框点「是」后拿到 1200×800 JPEG） |
 | AstrBot 插件客户端打真实桥接 | ✅ `alive()`、`cua_windows`、`cua_screenshot` 全通 |
 | Coo（Coopanion 自己的模型）调用这些工具 | ❌ 未验证（等价于在 Coopanion 里问 Coo"看看我的屏幕"） |
-| pnpm typecheck | ❌ 未跑（独立包，没装 devDependencies） |
+| `tsc --noEmit`（对 `cortico@0.2.8` 的真实类型） | ✅ 通过 |
+| `npm run describe` 生成的 describe.json | ✅ 已提交，CI 校验不漂移 |
+
+## 开发
+
+```bash
+npm ci
+npm run typecheck     # 对着 cortico 的类型检查（Api 6 的契约会被真正校验）
+npm run describe      # 重新生成 describe.json
+npm run check         # typecheck + describe + git diff --exit-code
+```
+
+工具名、description 或 parameters 改了以后记得跑一次 `npm run describe`——扩展页与市场读的是这个文件，
+CI 会在它过期时失败。
 
 ## 还没做
 

@@ -4,18 +4,21 @@ import { describeTools, type WorldContext, type WorldDefinition } from 'cortico/
 import { CUA_DEFAULTS, CUA_ID, type CuaConfigSection } from './config.ts';
 import { CUA_TOOL_SPECS, CuaWorld } from './world.ts';
 
+/** One line per tool, for people and the market; `scripts/gen-describe.ts` exports it to describe.json. */
+export const CUA_SUMMARIES: Record<string, { zh: string; en: string }> = {
+  cua_screenshot: { zh: '截一块显示器，附指针位置与前台窗口标题', en: 'Capture one display with the pointer position and foreground window title' },
+  cua_windows: { zh: '列出可见的顶层窗口', en: 'List the visible top-level windows' },
+  cua_click: { zh: '把鼠标移到某处并点击', en: 'Move the mouse to a point and click' },
+  cua_type: { zh: '在当前输入焦点输入文字', en: 'Type text at the current input focus' },
+  cua_key: { zh: '按一个键或组合键', en: 'Press a key or a key combination' },
+  cua_focus: { zh: '把一个窗口切到前台', en: 'Bring a window to the foreground' },
+};
+
 export const CUA: WorldDefinition<CuaConfigSection> = {
   id: CUA_ID,
   label: 'CUA',
   describe: {
-    tools: describeTools(CUA_TOOL_SPECS, {
-      cua_screenshot: { zh: '截一块显示器，附指针位置与前台窗口标题', en: 'Capture one display with the pointer position and foreground window title' },
-      cua_windows: { zh: '列出可见的顶层窗口', en: 'List the visible top-level windows' },
-      cua_click: { zh: '把鼠标移到某处并点击', en: 'Move the mouse to a point and click' },
-      cua_type: { zh: '在当前输入焦点输入文字', en: 'Type text at the current input focus' },
-      cua_key: { zh: '按一个键或组合键', en: 'Press a key or a key combination' },
-      cua_focus: { zh: '把一个窗口切到前台', en: 'Bring a window to the foreground' },
-    }),
+    tools: describeTools(CUA_TOOL_SPECS, CUA_SUMMARIES),
     events: [],
   },
   defaults: () => ({ ...CUA_DEFAULTS, screenshot: { ...CUA_DEFAULTS.screenshot } }),

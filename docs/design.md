@@ -11,7 +11,7 @@
 
 ## 2. 数据流
 
-`@
+```
 用户（QQ / Telegram / WebChat）
   │  "帮我看看屏幕上那个报错是什么"
   ▼
@@ -33,7 +33,7 @@ AstrBot 主 Agent ── tool_call: coopanion_screen ──▶ astrbot_plugin_co
   ▲                                                   │
   │                                                   ▼
   └──────── CallToolResult[ TextContent, ImageContent ] ──▶ 模型（多模态）
-`@
+```
 
 ## 3. 为什么是扩展，而不是补丁
 

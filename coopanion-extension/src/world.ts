@@ -242,7 +242,9 @@ export class CuaWorld implements World {
     return {
       text: out.text,
       failed: out.failed === true,
-      blobs: (out.blobs ?? []).map((b) => ({ mime: b.mime, name: b.name ?? null, base64: Buffer.from(b.bytes).toString('base64') })),
+      // BlobInput is either inline bytes or a handle into the host's blob store. The bridge only
+      // carries inline bytes, so a handle-only blob is dropped rather than sent as an empty image.
+      blobs: (out.blobs ?? []).flatMap((b) => ('bytes' in b ? [{ mime: b.mime, name: b.name ?? null, base64: Buffer.from(b.bytes).toString('base64') }] : [])),
     };
   }
 
