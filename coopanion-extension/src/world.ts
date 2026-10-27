@@ -121,17 +121,21 @@ export class CuaWorld implements World {
   private grantedUntil = 0;
   /** In-flight question, so parallel calls in one round raise one box. */
   private pendingAsk: Promise<'yes' | 'no' | 'timeout'> | null = null;
+  /** A refusal inside a bot turn sticks until that turn ends; a bridge call gets a fresh question. */
+  private refusedThisTurn = false;
 
   constructor(private readonly opts: CuaWorldOptions) {}
 
   onTurnEnded(): void {
     this.turnGranted = false;
     this.pendingAsk = null;
+    this.refusedThisTurn = false;
   }
 
   onHandoffEnded(): void {
     this.turnGranted = false;
     this.pendingAsk = null;
+    this.refusedThisTurn = false;
   }
 
   private get cfg(): CuaConfigSection {
@@ -147,23 +151,29 @@ export class CuaWorld implements World {
   }
 
   /** Ask the person, at most once per level; throws a readable refusal when they say no. */
-  private async permit(what: string, signal?: AbortSignal): Promise<void> {
+  private async permit(what: string, signal?: AbortSignal, sticky = true): Promise<void> {
     const level = this.askLevel();
     if (level === 'never-ask') return;
-    if (this.turnGranted && level !== 'ask-each-command') return;
     if (level === 'ask-once' && Date.now() < this.grantedUntil) return;
+    if (this.turnGranted && level !== 'ask-each-command') return;
+    // A no already given in this bot turn: fail without nagging. Bridge calls skip this, because
+    // there is no turn to end — the person gets asked again on the next call.
+    if (sticky && this.refusedThisTurn) throw new CuaFailure('这一轮已经拒绝过了，这次不做；等使用者换一轮再说。');
     const who = this.opts.botName || 'Coopanion';
     const question = who + ' 想' + what + '\n\n可以吗？（' + ASK_TIMEOUT_MS / 1000 + ' 秒不答按拒绝）';
     const ask = this.opts.ask ?? askDesktop;
     const answer = level === 'ask-each-command'
       ? await ask(question, 'CUA', ASK_TIMEOUT_MS, signal)
       : await (this.pendingAsk ??= ask(question, 'CUA', ASK_TIMEOUT_MS, signal));
+    // The box is closed whichever way it went; keeping it around would turn one unanswered
+    // question into a permanent refusal for every later call.
+    this.pendingAsk = null;
     if (answer !== 'yes') {
+      if (sticky) this.refusedThisTurn = true;
       throw new CuaFailure(answer === 'timeout'
         ? '确认框没有回答，' + ASK_TIMEOUT_MS / 1000 + ' 秒后按拒绝处理，这次什么也没做。'
         : '使用者点了「否」，这次什么也没做。不要换个说法重试。');
     }
-    this.pendingAsk = null;
     this.turnGranted = true;
     if (level === 'ask-once') this.grantedUntil = Date.now() + (this.cfg.grantMinutes || CUA_DEFAULTS.grantMinutes) * 60_000;
   }
@@ -174,10 +184,10 @@ export class CuaWorld implements World {
   }
 
   /** One tool call, shared by the bot's tool table and the loopback bridge. Throws on refusal. */
-  async call(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolOutcome> {
+  async call(name: string, args: Record<string, unknown>, signal?: AbortSignal, sticky = true): Promise<ToolOutcome> {
     switch (name) {
       case 'cua_screenshot': {
-        await this.permit('看一眼你的屏幕', signal);
+        await this.permit('看一眼你的屏幕', signal, sticky);
         const display = typeof args.display === 'number' ? args.display : 1;
         const shot = await this.run<ShotResult>('screenshot', {
           display,
@@ -191,7 +201,7 @@ export class CuaWorld implements World {
         };
       }
       case 'cua_windows': {
-        await this.permit('看一眼你开了哪些窗口', signal);
+        await this.permit('看一眼你开了哪些窗口', signal, sticky);
         const list = await this.run<WindowEntry[]>('windows', {}, signal);
         return { text: describeWindows(list) };
       }
@@ -199,28 +209,28 @@ export class CuaWorld implements World {
         const x = Number(args.x);
         const y = Number(args.y);
         if (!Number.isFinite(x) || !Number.isFinite(y)) return { text: '[cua_click] 需要 x 与 y。', failed: true };
-        await this.permit('把鼠标移到 (' + x + ', ' + y + ') 并点击', signal);
+        await this.permit('把鼠标移到 (' + x + ', ' + y + ') 并点击', signal, sticky);
         await this.run('click', { x, y, button: args.button ?? 'left', clicks: args.clicks ?? 1 }, signal);
         return { text: '已点击 (' + x + ', ' + y + ')。' };
       }
       case 'cua_type': {
         const text = typeof args.text === 'string' ? args.text : '';
         if (!text) return { text: '[cua_type] text 不能为空。', failed: true };
-        await this.permit('在当前焦点输入 ' + text.length + ' 个字符', signal);
+        await this.permit('在当前焦点输入 ' + text.length + ' 个字符', signal, sticky);
         await this.run('type', { text }, signal);
         return { text: '已输入 ' + text.length + ' 个字符。' };
       }
       case 'cua_key': {
         const keys = typeof args.keys === 'string' ? args.keys.trim() : '';
         if (!keys) return { text: '[cua_key] keys 不能为空。', failed: true };
-        await this.permit('按 ' + keys, signal);
+        await this.permit('按 ' + keys, signal, sticky);
         await this.run('key', { keys }, signal);
         return { text: '已按 ' + keys + '。' };
       }
       case 'cua_focus': {
         const window = typeof args.window === 'string' ? args.window : '';
         if (!window) return { text: '[cua_focus] window 不能为空。', failed: true };
-        await this.permit('把窗口「' + window + '」切到前台', signal);
+        await this.permit('把窗口「' + window + '」切到前台', signal, sticky);
         const out = await this.run<{ ok: boolean; foreground?: string }>('focus', { window }, signal);
         return { text: out.ok ? '已切到前台：' + (out.foreground || window) : '没能把「' + window + '」切到前台。', failed: out.ok ? undefined : true };
       }
@@ -229,7 +239,12 @@ export class CuaWorld implements World {
     }
   }
 
+  /**
+   * The bot's view of this World. Empty unless `worlds.cua.exposeToBot` is on: by default the
+   * tools belong to the bridge (AstrBot), and Coo never sees them in its tool table.
+   */
   tools(): ToolDef[] {
+    if (!this.cfg.exposeToBot) return [];
     return CUA_TOOL_SPECS.map((spec) => ({
       ...spec,
       interruptible: true,
@@ -238,7 +253,8 @@ export class CuaWorld implements World {
   }
 
   async bridgeCall(name: string, args: Record<string, unknown>): Promise<BridgeOutcome> {
-    const out = await this.call(name, args);
+    // Bridge calls are not part of a bot turn, so a refusal must not stick to the next one.
+    const out = await this.call(name, args, undefined, false);
     return {
       text: out.text,
       failed: out.failed === true,
@@ -248,7 +264,9 @@ export class CuaWorld implements World {
     };
   }
 
+  /** Nothing enters the bot's system prompt while it does not get the tools. */
   envPromptVars(): Record<string, string> {
+    if (!this.cfg.exposeToBot) return {};
     const level = this.askLevel();
     const port = this.bridge?.port ?? this.cfg.port;
     return {
@@ -278,6 +296,7 @@ export class CuaWorld implements World {
       }],
       badges: [
         { label: en ? 'Ask' : '先问你', value: level, tone: level === 'never-ask' ? 'off' : 'on' },
+        { label: en ? 'To Coo' : '给 Coo 用', value: this.cfg.exposeToBot ? (en ? 'yes' : '是') : (en ? 'no' : '否'), tone: this.cfg.exposeToBot ? 'on' : 'off' },
         { label: en ? 'Shot' : '截图', value: (this.cfg.screenshot?.maxWidth ?? 1280) + '×' + (this.cfg.screenshot?.maxHeight ?? 800), tone: 'plain' },
         { label: en ? 'Bridge port' : '桥接端口', value: this.bridge ? String(this.bridge.port) : '—', tone: this.bridge ? 'plain' : 'off' },
       ],
@@ -295,6 +314,7 @@ export class CuaWorld implements World {
       port: () => this.cfg.port ?? CUA_DEFAULTS.port,
       list: () => CUA_TOOL_SPECS.map((t) => t.name),
       call: (name, args) => this.bridgeCall(name, args),
+      hosts: () => (this.cfg.bridgeHosts || CUA_DEFAULTS.bridgeHosts).split(',').map((h) => h.trim().toLowerCase()).filter(Boolean),
       stateFile: this.stateFile(),
       log: host.log,
     });

@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-10-27
+
+### Changed
+
+- **The CUA tools are no longer given to Coo by default.** `worlds.cua.exposeToBot` is `false`, so the
+  bot's tool table stays clean and only the bridge (AstrBot) can use the screen. Turn it on if you
+  want both.
+- The bridge's `Host` allowlist is configurable (`worlds.cua.bridgeHosts`) so a reverse proxy or a
+  named tunnel can reach it without weakening the loopback bind.
+
+### Added
+
+- Remote deployment: the plugin now takes `base` + `token` (+ `verify_tls`) for the case where
+  AstrBot runs on a server and Coopanion on your own PC, with [docs/remote.md](docs/remote.md)
+  covering SSH reverse tunnels, frp and HTTPS reverse proxies.
+
 ## [0.1.0] - 2026-10-27
 
 ### Added

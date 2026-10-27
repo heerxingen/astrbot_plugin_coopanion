@@ -23,6 +23,8 @@
 
 只装插件没有用：工具的实现（截图、点击、权限询问）在 Coopanion 那一半。
 
+**这些工具默认只给桥接用，Coo 自己看不到也调不到**（`worlds.cua.exposeToBot` 默认关闭）。
+
 ## 安装
 
 ### 1. Coopanion 扩展
@@ -48,10 +50,16 @@ Coopanion 设置 → **扩展** → 手动安装 → **本机目录** → 选这
 
 | 配置项 | 值 |
 |---|---|
-| `bridge_json` | 上面那个 `bridge.json` 的完整路径 |
+| `bridge_json` | **同机部署**：上面那个 `bridge.json` 的完整路径 |
+| `base` | **远程部署**：隧道/反代给 AstrBot 的地址，如 `http://127.0.0.1:17901` 或 `https://coopanion.example.com` |
+| `token` | **远程部署**：bridge.json 里的 token（隧道尽头没有文件可读） |
+| `verify_tls` | 默认开；只有自签证书才关 |
 | `timeout` | 60（Coopanion 首次会弹框等人点） |
 
 重启 AstrBot。模型需要是**多模态**的，否则图片白给。
+
+> AstrBot 在服务器上、Coopanion 在你自己电脑上？看 **[docs/remote.md](docs/remote.md)**：
+> SSH 反向隧道 / frp / HTTPS 反代三种接法，以及为什么桥接仍然只监听 `127.0.0.1`。
 
 ## 工具
 
@@ -80,7 +88,8 @@ Coopanion 设置 → **扩展** → 手动安装 → **本机目录** → 选这
 
 ## 安全边界
 
-- 桥接只监听 `127.0.0.1`，并校验 `Host` 头是回环名——浏览器里的网页打不到。
+- 桥接只监听 `127.0.0.1`，并校验 `Host` 头（默认只认回环名，反代时把公网域名加进
+  `worlds.cua.bridgeHosts`）——浏览器里的网页打不到。
 - 每次启动重新生成 32 字节令牌，写在 `bridge.json`（0600）。**任何能读这个文件的本机进程
   都能驱动鼠标键盘**，和"允许电脑操作"是同一级别的授权。
 - 插件不含任何"跳过确认"的开关。
@@ -131,7 +140,7 @@ astrbot_plugin_coopanion/        ← AstrBot 插件（仓库根）
 │   ├── describe.json          npm run describe 生成
 │   ├── src/{index,definition,config,world,bridge,engine}.ts
 │   └── scripts/{cua,ask}.ps1, gen-describe.ts
-├── docs/                      调研与设计（Coopanion 接口、AstrBot 插件 API 的代码级事实）
+├── docs/                      调研与设计；remote.md 是服务器部署的接法
 └── .github/workflows/ci.yml
 ```
 

@@ -5,6 +5,9 @@
 
 不是改内置 World，也不是打补丁：它走的就是扩展页那套安装流程。
 
+**默认不给 Coo 用**：这些工具只出现在回环桥接上，Coo 的工具表里没有它们
+（`worlds.cua.exposeToBot` 打开才会有）。
+
 ## 它做什么
 
 | 工具 | 作用 | 回图 |
@@ -65,6 +68,8 @@ curl -s -H "Authorization: Bearer $(cat "<部署目录>/cua/bridge.json" | node 
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `enabled` | false | World 总览里的开关 |
+| `exposeToBot` | **false** | 也让 Coo 用这些工具；默认只有桥接能用，Coo 看不到这些工具 |
+| `bridgeHosts` | 127.0.0.1,localhost,[::1] | 桥接允许的 Host（反代时加公网域名，端口忽略） |
 | `ask` | ask-once | ask-each-command / ask-each-turn / ask-once / never-ask |
 | `grantMinutes` | 30 | ask-once 的同意有效期 |
 | `port` | 17901 | 桥接端口，0 = 随便挑；占用会顺延 |

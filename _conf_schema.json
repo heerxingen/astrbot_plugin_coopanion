@@ -1,20 +1,26 @@
 {
   "bridge_json": {
     "type": "string",
-    "description": "Coopanion 的 cua/bridge.json 路径（里面有端口和令牌）。留空则自动在 %USERPROFILE%\\.coopanion 下找。",
+    "description": "本机部署时用：Coopanion 的 cua/bridge.json 路径（里面有端口和令牌）。远程部署留空。",
     "default": "",
-    "hint": "例如 C:\\Users\\you\\.coopanion\\default\\cua\\bridge.json"
+    "hint": "例如 C:\\Users\\you\\.coopanion\\default\\data\\cua\\bridge.json"
   },
   "base": {
     "type": "string",
-    "description": "手动指定桥接地址（同时填 token 才生效，一般不用；优先用 bridge_json）。",
-    "default": ""
+    "description": "远程部署时用：隧道/反代暴露给 AstrBot 的地址，可带路径前缀。留空则本机自动发现。",
+    "default": "",
+    "hint": "例如 https://coopanion.example.com 或 https://example.com/coopanion"
   },
   "token": {
     "type": "string",
-    "description": "手动指定令牌（配合 base 使用）。留空则从 bridge.json 读。",
+    "description": "远程部署时用：本机 Coopanion 的 cua/bridge.json 里的 token（隧道尽头没有文件可读）。",
     "default": "",
     "secret": true
+  },
+  "verify_tls": {
+    "type": "bool",
+    "description": "校验 HTTPS 证书。只有用自签证书、且你清楚风险时才关。",
+    "default": true
   },
   "timeout": {
     "type": "float",

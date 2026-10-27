@@ -41,11 +41,15 @@ class CoopanionClient:
         base: str = "",
         token: str = "",
         timeout: float = 60.0,
+        verify_tls: bool = True,
     ) -> None:
         self._bridge_json = bridge_json.strip()
+        # Trailing slash gone so "/v1/tool" never doubles it. A base may carry a path prefix
+        # (https://host/coopanion), which is what a reverse proxy in front of the tunnel gives you.
         self._base = base.strip().rstrip("/")
         self._token = token.strip()
         self.timeout = timeout
+        self._verify = verify_tls
         self._cache: tuple[float, str, str] | None = None  # (mtime, base_url, token)
 
     # ---- 发现 ---------------------------------------------------------------
@@ -92,8 +96,15 @@ class CoopanionClient:
             self._cache = (mtime, f"http://127.0.0.1:{port}", token)
             return self._cache[1], self._cache[2]
 
+        # Remote deployment: AstrBot runs on a server and reaches Coopanion through a tunnel, so
+        # there is no bridge.json on this machine. base + token is then the whole configuration.
         if self._base and self._token:
             return self._base, self._token
+        if self._base and not self._token:
+            raise CoopanionError(
+                f"配了 base（{self._base}）却没有 token。远程部署时把本机 Coopanion 的 "
+                "cua/bridge.json 里的 token 抄进来——隧道尽头没有文件可读。"
+            )
 
         for path in self.candidate_bridge_files():
             if path.is_file():
@@ -112,7 +123,7 @@ class CoopanionClient:
         """调用一个 cua 工具，返回 {text, failed, blobs}。"""
         base_url, token = self._discover()
         body = {"name": tool, "args": args or {}}
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, verify=self._verify) as client:
             try:
                 resp = await client.post(
                     base_url + "/v1/tool",
@@ -121,14 +132,18 @@ class CoopanionClient:
                 )
             except httpx.ConnectError as e:
                 raise CoopanionError(
-                    f"连不上 Coopanion 的 CUA 桥接（{base_url}）。确认 Coopanion 正在运行、扩展已启用；"
-                    "端口变了的话删掉缓存或重启 AstrBot 再试。"
+                    f"连不上 Coopanion 的 CUA 桥接（{base_url}）。本机部署：确认 Coopanion 在跑、扩展已启用；"
+                    "远程部署：确认隧道（ssh -R / frp / 反代）是通的，且 base 前面的路径前缀写对了。"
                 ) from e
             except httpx.TimeoutException as e:
                 raise CoopanionError(
                     "Coopanion 一直没回：多半是在等你桌面上那个确认框点「是」，或者截图超时。"
                     "把插件配置里的 timeout 调大再试。"
                 ) from e
+            except httpx.HTTPError as e:
+                # Everything else transport-level (a tunnel dropping mid-response, a proxy returning
+                # garbage) ends the same way: the call did not happen.
+                raise CoopanionError(f"与 Coopanion 的连接中断（{base_url}）：{type(e).__name__} {e}") from e
 
         if resp.status_code == 401:
             raise CoopanionError("桥接令牌不对（401）。重启一次 Coopanion 让它重写 cua/bridge.json，再重启 AstrBot。")
@@ -145,7 +160,7 @@ class CoopanionClient:
     async def alive(self) -> dict[str, Any]:
         """探活：GET /v1/health。"""
         base_url, token = self._discover()
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=5.0, verify=self._verify) as client:
             resp = await client.get(base_url + "/v1/health", headers={"authorization": f"Bearer {token}"})
             resp.raise_for_status()
             return resp.json()

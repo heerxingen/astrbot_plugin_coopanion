@@ -9,6 +9,12 @@ export const ASK_LEVELS = ['ask-each-command', 'ask-each-turn', 'ask-once', 'nev
 export type AskLevel = (typeof ASK_LEVELS)[number];
 
 export interface CuaConfigSection extends WorldSection {
+  /**
+   * Whether Coo itself gets these tools. Off by default: the World exists so that *another*
+   * program on this machine (AstrBot) can use the screen through the bridge, not so the bot can
+   * drive the desktop. Turn it on only if you want both.
+   */
+  exposeToBot: boolean;
   /** Ask on the desktop before a call: every call, once per turn, once per `grantMinutes`, or never. */
   ask: AskLevel;
   /** How long an 「ask-once」 yes holds. */
@@ -17,6 +23,11 @@ export interface CuaConfigSection extends WorldSection {
   port: number;
   /** Serve the loopback bridge for other programs (AstrBot and friends). */
   bridge: boolean;
+  /**
+   * Host names the bridge answers, comma separated. Loopback by default. Behind a reverse tunnel
+   * or a TLS proxy the Host header is the public name, so add it here (ports are ignored).
+   */
+  bridgeHosts: string;
   /** Per-call wall clock for the PowerShell engine. */
   timeoutMs: number;
   screenshot: {
@@ -28,10 +39,12 @@ export interface CuaConfigSection extends WorldSection {
 
 export const CUA_DEFAULTS: CuaConfigSection = {
   enabled: false,
+  exposeToBot: false,
   ask: 'ask-once',
   grantMinutes: 30,
   port: 17901,
   bridge: true,
+  bridgeHosts: '127.0.0.1,localhost,[::1]',
   timeoutMs: 30_000,
   screenshot: { maxWidth: 1280, maxHeight: 800, quality: 75 },
 };
@@ -45,6 +58,19 @@ export const CUA_CONFIG_GROUP: ConfigGroup = {
     type: 'object',
     title: 'CUA（看屏幕 / 点 / 打字）',
     properties: {
+      // Same switch as the World overview, but writable here so the choice survives a restart.
+      [`${K}.enabled`]: {
+        type: 'boolean', title: '启用本 World', 'x-hot': true,
+        description: '和「World 总览」里的开关是同一个值。在这里打开会写进 config.json，重启后仍然生效；关掉则停止桥接与工具。',
+      },
+      [`${K}.exposeToBot`]: {
+        type: 'boolean', title: '也让 Coo 用这些工具', 'x-hot': true,
+        description: '默认关闭：这些工具只通过桥接给本机其他程序（AstrBot 等）用，Coo 看不到、也调不到。打开后 Coo 自己也能截屏和操作鼠标键盘。',
+      },
+      [`${K}.bridgeHosts`]: {
+        type: 'string', title: '桥接允许的 Host', 'x-hot': true,
+        description: '逗号分隔。桥接只监听 127.0.0.1，所以正常不用改；经 SSH 反向隧道或 TLS 反代进来时，请求的 Host 是公网名字，把那个名字加进来（端口忽略）。',
+      },
       [`${K}.ask`]: {
         type: 'string', title: '什么时候先问你', enum: [...ASK_LEVELS], 'x-hot': true,
         description: 'ask-each-command:每次调用前都弹框问;ask-each-turn:每一轮第一次调用前问一次;ask-once:问一次,同意后「同意管多久」内不再问;never-ask:都不问。弹框是桌面上系统原生的「是/否」确认窗(默认按钮是「否」,关闭窗口、60 秒不答都按拒绝算)。',

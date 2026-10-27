@@ -35,11 +35,19 @@ seen: dict[str, object] = {}
 
 
 class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def _unauthorized(self):
+        payload = b'{"ok":false,"error":"unauthorized"}'
+        self.send_response(401)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
     def do_GET(self):  # noqa: N802
         if self.headers.get("authorization") != "Bearer " + TOKEN:
-            self.send_response(401)
-            self.end_headers()
-            self.wfile.write(b'{"ok":false,"error":"unauthorized"}')
+            self._unauthorized()
             return
         payload = json.dumps({"ok": True, "world": "cua", "tools": ["cua_screenshot", "cua_windows"]}).encode()
         self.send_response(200)
@@ -50,9 +58,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):  # noqa: N802
         if self.headers.get("authorization") != "Bearer " + TOKEN:
-            self.send_response(401)
-            self.end_headers()
-            self.wfile.write(b'{"ok":false,"error":"unauthorized"}')
+            self._unauthorized()
             return
         length = int(self.headers.get("content-length") or 0)
         body = json.loads(self.rfile.read(length) or b"{}")

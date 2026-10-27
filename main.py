@@ -47,6 +47,7 @@ class Main(star.Star):
             base=str(self.config.get("base") or ""),
             token=str(self.config.get("token") or ""),
             timeout=float(self.config.get("timeout") or 60.0),
+            verify_tls=bool(self.config.get("verify_tls", True)),
         )
 
     async def initialize(self) -> None:

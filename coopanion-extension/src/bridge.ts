@@ -30,6 +30,8 @@ export interface BridgeOptions {
   list: () => string[];
   /** Runs one tool; throws with a human-readable message when it is refused. */
   call: (name: string, args: Record<string, unknown>) => Promise<BridgeOutcome>;
+  /** Host names answered, lower-case and without the port. Loopback by default; add the public name behind a tunnel. */
+  hosts: () => string[];
   /** <dataDir>/cua/bridge.json — written on start, removed on stop. */
   stateFile: string;
   log?: Logger;
@@ -92,8 +94,8 @@ export class Bridge {
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     // The listener is loopback-only, but a browser on this machine can still reach it; the token
     // and the Host check are what keep a web page from driving the desktop.
-    const host = req.headers.host ?? '';
-    if (!/^(127\.0\.0\.1|localhost)(:\d+)?$/i.test(host)) {
+    const host = hostName(req.headers.host);
+    if (!host || !this.opts.hosts().includes(host)) {
       res.writeHead(421).end();
       return;
     }
@@ -142,6 +144,17 @@ export class Bridge {
     const b = Buffer.from(this.token);
     return a.length === b.length && timingSafeEqual(a, b);
   }
+}
+
+/** `example.com:8080` -> `example.com`; `[::1]:8080` -> `[::1]`. */
+function hostName(header: string | undefined): string {
+  const raw = (header ?? '').trim().toLowerCase();
+  if (!raw) return '';
+  if (raw.startsWith('[')) {
+    const end = raw.indexOf(']');
+    return end < 0 ? raw : raw.slice(0, end + 1);
+  }
+  return raw.split(':')[0] ?? '';
 }
 
 async function readBody(req: IncomingMessage): Promise<string> {
