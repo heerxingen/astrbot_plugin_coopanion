@@ -85,14 +85,37 @@ API Key 在 AstrBot 的 **设置 → OpenAPI → 创建 API Key**，需要 `chat
 - 两个方向都保留"能推就推、推不到就拉"的能力。
 
 
-### 2. AstrBot 插件配置页不好懂（用户第二次提）
+### 2. AstrBot 插件配置页：本机部署 vs 服务器部署 分不清（用户提了两次）
 
-现状：7 个配置项（`bridge_json/base/token/verify_tls/timeout/umo/poll_seconds`），
-用户反馈「只看这个分不清到底怎么配置」。候选项：
-- 把同机/远程两种部署写成 `object` 嵌套（`type: object` + `items`），或者
-- 提供 `views/` 可视化页（`plugin-pages.md`），页面里直接给"同机一键填 / 远程填三项"的表单。
+用户原话（第二次补充）：**"配置页的问题是本机部署和服务器部署的配置方式区分不明显，大部分人拿到手看不懂怎么配置"**。
 
-### 3. 其它已知缺口
+现在的 7 个字段是平铺的，没有告诉用户"你属于哪种情况、该填哪几个"：
+
+@@@
+bridge_json      同机部署填
+base + token     服务器部署填
+verify_tls       远程才有意义
+timeout          都有意义
+umo              都有意义
+poll_seconds     都有意义
+@@@
+
+拿到手的人看到 7 个空框，不知道要填 3 个、4 个还是全填，也不知道填了会怎样。
+
+要做的（任选其一，优先第一个）：
+
+1. **按场景分组**：把 schema 改成两个 @@object@@
+   - @@local@@：只有 @@bridge_json@@（hint：AstrBot 和 Coopanion 在同一台机器时只填这一项）
+   - @@remote@@：@@base@@ / @@token@@ / @@verify_tls@@（hint：AstrBot 在服务器、Coopanion 在你电脑上时填这块）
+   公共项（@@timeout@@ / @@umo@@ / @@poll_seconds@@）放在最后。
+   这样"填哪一块"本身就回答了"我是哪种部署"。
+2. **views 可视化页**（参考 @@zh/dev/star/guides/plugin-pages.md@@）：第一屏先问一句
+   "你的 AstrBot 和 Coopanion 在同一台机器吗？"，选完只渲染对应字段，并顺手生成
+   @@bridge_json@@ 的候选路径。
+3. 至少也要在每个 hint 最前面加一句限定语：**"仅同机部署"** / **"仅服务器部署"**，
+   并把不适用的那组用 @@invisible@@ 或分组默认收起。
+
+### 3.
 
 - 没有 AstrBot 真机联调（本地 3030 未监听）。
 - 只有 Windows；`cua_zoom` / `cua_wait` / 动作后自动截图未实现。
