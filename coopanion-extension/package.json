@@ -1,0 +1,48 @@
+{
+  "name": "cortico-world-cua",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "CUA —— 给 Coopanion 的 cortico World 扩展：让 Coo 和你自己的其他程序（如 AstrBot）看、点、打字，权限由你掌握。 / A cortico World extension that lets Coo and your own tools look at and drive this PC, with approval under your control.",
+  "license": "MIT",
+  "author": {
+    "name": "Heerxingen"
+  },
+  "keywords": [
+    "cortico-world",
+    "cortico",
+    "coopanion",
+    "computer-use",
+    "cua",
+    "screenshot",
+    "windows"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "os": [
+    "win32"
+  ],
+  "main": "./src/index.ts",
+  "cortico": {
+    "kind": "world",
+    "api": 6,
+    "displayName": "CUA",
+    "icon": "assets/icon.svg",
+    "describe": "describe.json"
+  },
+  "files": [
+    "src",
+    "scripts",
+    "assets",
+    "README.md",
+    "describe.json"
+  ],
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}

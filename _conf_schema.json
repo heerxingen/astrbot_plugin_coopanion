@@ -1,0 +1,24 @@
+{
+  "bridge_json": {
+    "type": "string",
+    "description": "Coopanion 的 cua/bridge.json 路径（里面有端口和令牌）。留空则自动在 %USERPROFILE%\\.coopanion 下找。",
+    "default": "",
+    "hint": "例如 C:\\Users\\you\\.coopanion\\default\\cua\\bridge.json"
+  },
+  "base": {
+    "type": "string",
+    "description": "手动指定桥接地址（同时填 token 才生效，一般不用；优先用 bridge_json）。",
+    "default": ""
+  },
+  "token": {
+    "type": "string",
+    "description": "手动指定令牌（配合 base 使用）。留空则从 bridge.json 读。",
+    "default": "",
+    "secret": true
+  },
+  "timeout": {
+    "type": "float",
+    "description": "单次调用超时（秒）。Coopanion 首次会弹确认框等用户点，别设太小。",
+    "default": 60
+  }
+}
