@@ -1,7 +1,7 @@
 """Coopanion 的 CUA 桥接客户端。
 
-Coopanion 侧装的是扩展 `cortico-world-cua`（见 ../cortico-world-cua/）：它在 127.0.0.1 上开一个
-小 HTTP 服务，并把**实际端口与令牌**写进部署目录的 `cua/bridge.json`：
+Coopanion 侧装的是扩展 `cortico-world-cua`（见 coopanion-extension/）：它在 127.0.0.1 上开一个
+小 HTTP 服务，并把**实际端口与令牌**写进部署数据目录的 `data/cua/bridge.json`：
 
     {"port": 17901, "token": "…", "tools": ["cua_screenshot", …]}
 
@@ -192,6 +192,24 @@ class CoopanionClient:
             raise CoopanionError(f"Coopanion 返回 {resp.status_code}：{resp.text[:200]}")
         out = resp.json()
         return list(out.get("messages") or [])
+
+    async def tools(self) -> list[dict[str, Any]]:
+        """取扩展声明的工具 schema（GET /v1/tools），AstrBot 按它注册工具。"""
+        base_url, token = self._discover()
+        async with httpx.AsyncClient(timeout=10.0, verify=self._verify) as client:
+            resp = await client.get(base_url + "/v1/tools", headers={"authorization": f"Bearer {token}"})
+        if resp.status_code == 401:
+            raise CoopanionError("桥接令牌不对（401）。重启一次 Coopanion 让它重写 cua/bridge.json，再重启 AstrBot。")
+        if resp.status_code >= 400:
+            raise CoopanionError(f"Coopanion 返回 {resp.status_code}：{resp.text[:200]}")
+        out = resp.json()
+        protocol = int(out.get("protocol") or 1)
+        if protocol != 1:
+            raise CoopanionError(f"桥接协议版本不匹配（{protocol}）。插件和扩展要一起升级。")
+        tools = out.get("tools")
+        if not isinstance(tools, list):
+            raise CoopanionError("Coopanion 返回的 tools 不是列表。")
+        return tools
 
     async def identity(self) -> dict[str, Any]:
         """名字与能力：谁是谁、Coo 能不能主动发消息。"""

@@ -3,6 +3,6 @@ display_name: Coopanion 电脑之眼
 desc: 让 bot 通过 Coopanion 看和操作这台电脑：截图、列窗口、点击、输入、按键、聚焦。权限询问留在 Coopanion 桌面上的确认框里。
 short_desc: 通过 Coopanion 看/操作电脑
 author: Heerxingen
-version: 0.3.1
+version: 0.4.0
 repo: https://github.com/heerxingen/astrbot_plugin_coopanion
-astrbot_version: ">=4.5.1"
+astrbot_version: ">=4.29,<5"

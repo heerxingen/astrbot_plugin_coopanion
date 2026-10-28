@@ -2,7 +2,7 @@
 import { spawnSync } from 'node:child_process';
 import { describeTools, type WorldContext, type WorldDefinition } from 'cortico/world.ts';
 import { CUA_DEFAULTS, CUA_ID, type CuaConfigSection } from './config.ts';
-import { CHAT_TOOL_SPEC, CUA_TOOL_SPECS, CuaWorld } from './world.ts';
+import { CHAT_TOOL_SPEC, CUA_TOOL_SPECS, DELEGATE_TOOL_SPECS, CuaWorld } from './world.ts';
 
 /** One line per tool, for people and the market; `scripts/gen-describe.ts` exports it to describe.json. */
 export const CUA_SUMMARIES: Record<string, { zh: string; en: string }> = {
@@ -13,13 +13,15 @@ export const CUA_SUMMARIES: Record<string, { zh: string; en: string }> = {
   cua_key: { zh: '按一个键或组合键', en: 'Press a key or a key combination' },
   cua_focus: { zh: '把一个窗口切到前台', en: 'Bring a window to the foreground' },
   send_msg_to_astrbot: { zh: '给隧道另一头的 AstrBot 发一条消息', en: 'Send a message to AstrBot at the other end of the tunnel' },
+  cua_delegate: { zh: '把一个多步电脑任务交给 Coo 在本机完成', en: 'Hand a multi-step computer task to Coo on this machine' },
+  cua_job: { zh: '查委托任务的结果', en: 'Check a delegated task' },
 };
 
 export const CUA: WorldDefinition<CuaConfigSection> = {
   id: CUA_ID,
-  label: 'CUA',
+  label: 'CUA Bridge',
   describe: {
-    tools: describeTools([CHAT_TOOL_SPEC, ...CUA_TOOL_SPECS], CUA_SUMMARIES),
+    tools: describeTools([CHAT_TOOL_SPEC, ...CUA_TOOL_SPECS, ...DELEGATE_TOOL_SPECS], CUA_SUMMARIES),
     events: [
       {
         type: 'cua.message',
@@ -29,9 +31,22 @@ export const CUA: WorldDefinition<CuaConfigSection> = {
         },
         trigger: 'flush',
       },
+      {
+        type: 'cua.task',
+        description: {
+          zh: '隧道另一头的 AstrBot 委托的一件电脑任务；做完把结果写进这一轮的回复。',
+          en: 'A computer task delegated by AstrBot; answer with the result in this turn.',
+        },
+        trigger: 'flush',
+      },
     ],
   },
-  defaults: () => ({ ...CUA_DEFAULTS, screenshot: { ...CUA_DEFAULTS.screenshot } }),
+  defaults: () => ({
+    ...CUA_DEFAULTS,
+    screenshot: { ...CUA_DEFAULTS.screenshot },
+    names: { ...CUA_DEFAULTS.names },
+    chat: { ...CUA_DEFAULTS.chat },
+  }),
   preflight: () => {
     if (process.platform !== 'win32') {
       throw new Error('CUA 目前只支持 Windows：截图、点击与窗口枚举都走 PowerShell + user32，其他平台还没有实现。');
@@ -44,6 +59,7 @@ export const CUA: WorldDefinition<CuaConfigSection> = {
   create: (ctx) => new CuaWorld({
     cfg: ctx.cfg,
     botName: ctx.botName,
+    botDir: ctx.botDir,
     // The deployment directory, not the code checkout: an installed app's repoRoot is its own
     // program folder, which an update replaces and the bot must not scribble in.
     dataDir: dataDirFor(ctx),

@@ -2,7 +2,7 @@
   "tools": [
     {
       "name": "send_msg_to_astrbot",
-      "description": "给另一个 bot 发一条消息。它不在本机、用不了这台电脑的鼠标键盘，但能查资料、跑工具、回答问题。发完不会立刻拿到回复；它回的话会以【…】开头出现在你的对话里。",
+      "description": "给另一个 bot 发一条消息。它不在本机、用不了这台电脑的鼠标键盘，但能查资料、跑工具、回答问题。配置了直连时它回的话会作为下一条消息进来；没有直连时进信箱。发完都不会立刻出现在返回值里。",
       "parameters": {
         "type": "object",
         "additionalProperties": false,
@@ -64,20 +64,25 @@
     },
     {
       "name": "cua_click",
-      "description": "把鼠标移到截图的 (x, y) 并点击。点之前先 cua_screenshot 看一眼，确认坐标落在真的控件上。",
+      "description": "把鼠标移到截图的 (x, y) 并点击。坐标是最近一次截图的像素，必须以那次截图为准；点之前先截一张，确认坐标落在真的控件上。",
       "parameters": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "display": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "截图时用的显示器序号；省略时用最近一次截图。"
+          },
           "x": {
             "type": "integer",
             "minimum": 0,
-            "description": "横坐标（截图像素）"
+            "description": "横坐标（最近一次 cua_screenshot 的像素）"
           },
           "y": {
             "type": "integer",
             "minimum": 0,
-            "description": "纵坐标（截图像素）"
+            "description": "纵坐标（最近一次 cua_screenshot 的像素）"
           },
           "button": {
             "type": "string",
@@ -158,7 +163,7 @@
     },
     {
       "name": "cua_focus",
-      "description": "把某个窗口切到前台（最小化的先还原）。window 用 cua_windows 给的 handle，或标题的一部分。",
+      "description": "把某个窗口切到前台（最小化的先还原）。window 用窗口列表给的 handle，或标题的一部分。",
       "parameters": {
         "type": "object",
         "additionalProperties": false,
@@ -179,7 +184,82 @@
         "zh": "把一个窗口切到前台",
         "en": "Bring a window to the foreground"
       }
+    },
+    {
+      "name": "cua_delegate",
+      "description": "把一件需要看屏幕、操作电脑的任务交给 Coo 的模型在本机做。提交后立刻返回 job id，用 cua_job 查结果；不要重复提交同一个任务。",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task": {
+            "type": "string",
+            "description": "要完成的事，写清楚目标和完成标准。"
+          },
+          "allow_act": {
+            "type": "boolean",
+            "description": "是否允许点击、输入、按键；默认 false，只查看。"
+          },
+          "deadline_ms": {
+            "type": "integer",
+            "minimum": 10000,
+            "maximum": 300000,
+            "description": "最多做多久，默认 120000。"
+          }
+        },
+        "required": [
+          "task"
+        ]
+      },
+      "tags": [
+        "act"
+      ],
+      "summary": {
+        "zh": "把一个多步电脑任务交给 Coo 在本机完成",
+        "en": "Hand a multi-step computer task to Coo on this machine"
+      }
+    },
+    {
+      "name": "cua_job",
+      "description": "查 cua_delegate 提交的任务：running / done / timeout / failed，以及结果文本。",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "description": "cua_delegate 返回的 job id。"
+          }
+        },
+        "required": [
+          "job_id"
+        ]
+      },
+      "tags": [
+        "read"
+      ],
+      "summary": {
+        "zh": "查委托任务的结果",
+        "en": "Check a delegated task"
+      }
     }
   ],
-  "events": []
+  "events": [
+    {
+      "type": "cua.message",
+      "description": {
+        "zh": "隧道另一头的 AstrBot 发来的消息，正文里带着发送者的名字。",
+        "en": "A message from AstrBot at the other end of the tunnel; the body names the sender."
+      },
+      "trigger": "flush"
+    },
+    {
+      "type": "cua.task",
+      "description": {
+        "zh": "隧道另一头的 AstrBot 委托的一件电脑任务；做完把结果写进这一轮的回复。",
+        "en": "A computer task delegated by AstrBot; answer with the result in this turn."
+      },
+      "trigger": "flush"
+    }
+  ]
 }

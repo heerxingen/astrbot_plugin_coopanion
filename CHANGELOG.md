@@ -4,6 +4,40 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-10-28
+
+### Added
+
+- `coopanion_delegate` / `coopanion_job`：把多步电脑任务交给 Coo 的模型在本机做，返回 job id 后轮询；
+  `allow_act=false` 时任务只能看不能动，长任务不会撞 AstrBot 的 120 秒工具超时。
+- Coo 可以在 Coopanion 里填 AstrBot OpenAPI 地址与 `chat` scope 的 API Key，直接 POST
+  `/api/v1/chat` 并把回复作为工具结果；没填时继续走信箱。
+
+### Changed
+
+- World id 从 `cua` 改为 `cua-bridge`（配置段 `worlds.cua-bridge.*`）。`worlds.cua` 会被 Coopanion
+  自己的迁移并进桌宠并删除，升级后要在 World 总览重新启用，`ask` / `names` 等设置也要重填；
+  `bridge.json` 的位置不变。
+- `coopanion_click` 增加 `display`，坐标按最近一次 `coopanion_screen` 的坐标帧换算；缺少坐标时
+  直接报错，不再默认点 `(0, 0)`。
+- 扩展的 `names.user` 留空时读 Coo 启动引导里填的名字（`worlds.desktop-pet.user`），不再固定
+  叫「使用者」。
+- 插件不再手写 6 个 CUA 工具：启动时拉扩展的 `GET /v1/tools`，按 schema 注册 `coopanion_*`
+  （`cua_screenshot` → `coopanion_screen`）。扩展加工具只改扩展；扩展晚启动时插件退避重试注册。
+- 插件配置页先选「同机部署」或「服务器 + SSH 隧道」，只显示对应字段；配置里仍保留旧的平铺项，
+  但按部署方式过滤。
+- 读屏幕和动键鼠分开授权（`askRead` / `askAct`），动键鼠前等使用者停手；桥接令牌首次生成后重启
+  不再变化。
+- Coo 的消息只送进配置的 `umo` 或最近一次 `send_msg_to_coo` 的会话，发送失败才注入该会话；
+  poller 在桥接晚启动时也会跑。
+
+### Fixed
+
+- 截图缩放后点击坐标没有反算，屏幕大于 1280×800 时点击位置偏移；多屏下还会整体偏到第一块屏。
+- `cua_type` 把 UTF-16 码元拆成两个 `keybd_event` 事件，中文会被拆成两个字符；改用 `SendInput` 的
+  Unicode 模式。
+- `describeShot` 的物理尺寸固定取第一块屏，第二块屏会报错主屏尺寸。
+
 ## [0.3.1] - 2026-10-27
 
 ### Changed

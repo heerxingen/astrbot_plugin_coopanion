@@ -13,7 +13,7 @@ export const CUA_SCRIPT = fileURLToPath(new URL('../scripts/cua.ps1', import.met
 export const ASK_SCRIPT = fileURLToPath(new URL('../scripts/ask.ps1', import.meta.url));
 
 export type CuaOp =
-  | 'info' | 'screenshot' | 'windows' | 'click' | 'move' | 'drag' | 'scroll' | 'type' | 'key' | 'focus';
+  | 'info' | 'idle' | 'screenshot' | 'windows' | 'click' | 'move' | 'drag' | 'scroll' | 'type' | 'key' | 'focus';
 
 export class CuaFailure extends Error {}
 
@@ -122,25 +122,36 @@ export function runCua<T>(op: CuaOp, args: Record<string, unknown>, opts: RunOpt
  * The approval box, in a child process so a wait does not block the World.
  * Anything but an explicit Yes is a refusal — including the timeout, which kills the dialog.
  */
-export function askDesktop(question: string, title: string, timeoutMs: number, signal?: AbortSignal): Promise<'yes' | 'no' | 'timeout'> {
+export function askDesktop(question: string, title: string, timeoutMs: number, signal?: AbortSignal, log?: Logger): Promise<'yes' | 'no' | 'timeout' | 'error'> {
   return new Promise((resolve) => {
     const child = spawn('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ASK_SCRIPT], {
       windowsHide: false,
       env: { ...process.env, CUA_ASK_TEXT: question, CUA_ASK_TITLE: title },
     });
     let settled = false;
-    const done = (answer: 'yes' | 'no' | 'timeout'): void => {
+    let stderr = '';
+    child.stderr?.setEncoding('utf8');
+    child.stderr?.on('data', (chunk: string) => { stderr += chunk; });
+    const done = (answer: 'yes' | 'no' | 'timeout' | 'error'): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
       resolve(answer);
     };
+    const fail = (reason: string): void => {
+      log?.warn('CUA approval box did not open', { reason, stderr: stderr.trim().slice(0, 500) });
+      done('error');
+    };
     const onAbort = (): void => { child.kill(); done('no'); };
     const timer = setTimeout(() => { child.kill(); done('timeout'); }, timeoutMs);
     signal?.addEventListener('abort', onAbort, { once: true });
     if (signal?.aborted) onAbort();
-    child.on('error', () => done('no'));
-    child.on('close', (code) => done(code === 0 ? 'yes' : 'no'));
+    child.on('error', (e) => fail(e.message));
+    child.on('close', (code) => {
+      if (code === 0) done('yes');
+      else if (code === 2) fail('ask.ps1 exited 2');
+      else done('no');
+    });
   });
 }

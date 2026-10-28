@@ -8,6 +8,8 @@ Coopanion 侧是一个真正的 Cortico World 扩展（`cortico-world-cua`），
 2. 权限询问、"用户正在用鼠标就别抢"、开关全部留在 Coopanion 扩展里，本插件不重复实现，
    也不提供"绕过权限"的开关。
 3. 工具名带 `coopanion_` 前缀，避免和 AstrBot 内置的 `astrbot_cua_*`（沙箱桌面）撞名。
+4. CUA 工具的 schema 由扩展的 `GET /v1/tools` 提供，插件启动时按它注册；插件只保留名字映射
+   和一个聊天工具，不再复制 6 份 docstring。
 """
 
 from __future__ import annotations
@@ -20,8 +22,29 @@ from astrbot.api import star
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.provider import ProviderRequest
 from astrbot.core.agent.message import TextPart
+from astrbot.core.agent.tool import FunctionTool
 
 from .client import CoopanionClient, CoopanionError
+
+# The extension names tools after what it does; AstrBot keeps its own prefix so a tool
+# collision with another plugin is visible in the name rather than silently replacing one.
+TOOL_ALIASES = {
+    "cua_screenshot": "coopanion_screen",
+    "cua_windows": "coopanion_windows",
+    "cua_click": "coopanion_click",
+    "cua_type": "coopanion_type",
+    "cua_key": "coopanion_key",
+    "cua_focus": "coopanion_focus",
+}
+
+
+def _local_tool_name(remote: str) -> str | None:
+    """Keep the old coopanion_* names where they exist; map new cua_* tools by prefix."""
+    if remote in TOOL_ALIASES:
+        return TOOL_ALIASES[remote]
+    if remote.startswith("cua_"):
+        return "coopanion_" + remote[4:]
+    return None
 
 
 def _text(text: str) -> mcp_types.TextContent:
@@ -45,26 +68,48 @@ class Main(star.Star):
     def __init__(self, context, config: dict | None = None) -> None:
         super().__init__(context)
         self.config = config or {}
+        mode = str(self.config.get("mode") or "").strip()
+        bridge_json = str(self.config.get("bridge_json") or "").strip()
+        base = str(self.config.get("base") or "").strip()
+        token = str(self.config.get("token") or "").strip()
+        # The hidden group keeps its old values when the mode changes; follow the selected
+        # mode, but fall back to whichever side is actually configured so an upgrade survives.
+        if mode == "remote" and not (base and token) and bridge_json:
+            mode = "local"
+        elif mode == "local" and not bridge_json and base and token:
+            mode = "remote"
+        if mode == "local":
+            base = token = ""
+        elif mode == "remote":
+            bridge_json = ""
         self.client = CoopanionClient(
-            bridge_json=str(self.config.get("bridge_json") or ""),
-            base=str(self.config.get("base") or ""),
-            token=str(self.config.get("token") or ""),
-            timeout=float(self.config.get("timeout") or 60.0),
-            verify_tls=bool(self.config.get("verify_tls", True)),
+            bridge_json=bridge_json,
+            base=base,
+            token=token,
+            timeout=float(self.config.get("timeout") or 90.0),
+            verify_tls=bool(self.config.get("verify_tls", True)) if mode != "local" else True,
         )
         # Names come from Coopanion (worlds.cua.names.*) so both ends speak the same language.
         self.names = {"coo": "Coo", "astrbot": "AstrBot", "user": "使用者"}
         # What Coo said while AstrBot was not listening, waiting to be shown to the model.
         self._inbox: list[dict[str, Any]] = []
+        # The session Coo's messages belong to: the configured umo, or the chat that last spoke to Coo.
+        self._peer_umo = str(self.config.get("umo") or "").strip()
         self._poller: asyncio.Task[None] | None = None
+        self._tools_task: asyncio.Task[None] | None = None
+        self._dynamic_tools: list[FunctionTool] = []
 
     async def initialize(self) -> None:
-        """插件载入后调用（AstrBot 在加载末尾 await 它）。只做一次不打扰的提示。"""
+        """插件载入后调用：同步工具表、读身份、必要时启动取信。"""
+        # The tool table is the extension's; retry until it answers instead of freezing a copy
+        # here, so adding a tool in the extension does not require editing the plugin.
+        self._tools_task = asyncio.create_task(self._sync_tools())
+        if self.config.get("poll_seconds", 30):
+            self._poller = asyncio.create_task(self._poll_coo())
         try:
-            info = await self.client.alive()
             identity = await self.client.identity()
-        except (CoopanionError, Exception) as e:  # noqa: BLE001 - 启动时失败不该拦住加载
-            self.logger.warning("Coopanion 的 CUA 桥接暂时不可用，工具调用会报错：%s", e)
+        except Exception as e:  # noqa: BLE001 - 启动时失败不该拦住加载
+            self.logger.warning("Coopanion 的 CUA 桥接暂时不可用，工具会在它起来后自动注册：%s", e)
             return
         for key in ("coo", "astrbot", "user"):
             if isinstance(identity.get(key), str) and identity[key].strip():
@@ -74,21 +119,103 @@ class Main(star.Star):
             self.names["astrbot"],
             self.names["coo"],
             self.config.get("poll_seconds", 30),
-            ", ".join(info.get("tools") or []),
+            ", ".join(identity.get("tools") or []),
         )
-        if self.config.get("poll_seconds", 30):
-            self._poller = asyncio.create_task(self._poll_coo())
 
     async def terminate(self) -> None:
-        """停用/重载插件时调用。把后台轮询收掉，别留下悬挂任务。"""
-        if self._poller is not None:
-            self._poller.cancel()
-            self._poller = None
+        """停用/重载插件时调用。撤掉注册的工具和后台任务。"""
+        self._unregister_tools()
+        for task in (self._poller, self._tools_task):
+            if task is not None:
+                task.cancel()
+        self._poller = None
+        self._tools_task = None
+
+    def _make_handler(self, remote: str):
+        """One handler per tool: the schema comes from the extension, the call goes to it."""
+
+        async def handler(event: AstrMessageEvent, **kwargs: Any) -> mcp_types.CallToolResult:
+            return await self._call(remote, kwargs)
+
+        return handler
+
+    def _unregister_tools(self) -> None:
+        if not self._dynamic_tools:
+            return
+        try:
+            manager = self.context.provider_manager.llm_tools
+        except Exception:
+            self._dynamic_tools = []
+            return
+        for tool in self._dynamic_tools:
+            try:
+                manager.remove_func(tool.name)
+            except Exception as e:  # noqa: BLE001 - unloading must not raise
+                self.logger.debug("移除 Coopanion 工具 %s 失败：%s", tool.name, e)
+        self._dynamic_tools = []
+
+    def _register_tools(self, specs: list[dict[str, Any]]) -> None:
+        """Register the extension's cua_* tools with AstrBot under the coopanion_* names."""
+        tools: list[FunctionTool] = []
+        for spec in specs:
+            if not isinstance(spec, dict):
+                continue
+            remote = str(spec.get("name") or "")
+            local = _local_tool_name(remote)
+            if not local:
+                continue
+            parameters = spec.get("parameters")
+            if not isinstance(parameters, dict) or parameters.get("type") != "object":
+                self.logger.warning("跳过没有对象参数的 Coopanion 工具：%s", remote)
+                continue
+            tools.append(
+                FunctionTool(
+                    name=local,
+                    description=str(spec.get("description") or ""),
+                    parameters=parameters,
+                    handler=self._make_handler(remote),
+                )
+            )
+        if not tools:
+            self.logger.warning("Coopanion 没有返回可注册的 cua_* 工具")
+            return
+        self._unregister_tools()
+        self.context.add_llm_tools(*tools)
+        # add_llm_tools derives the owner from the tool object, which is the framework's own
+        # module; point it at this plugin so unload/permission follow the plugin.
+        for tool in tools:
+            tool.handler_module_path = self.__class__.__module__
+        self._dynamic_tools = tools
+        self.logger.info("CUA 工具已注册：%s", ", ".join(t.name for t in tools))
+
+    async def _sync_tools(self) -> None:
+        """Fetch /v1/tools until the bridge answers, then register what it declares."""
+        delay = 5
+        while True:
+            try:
+                specs = await self.client.tools()
+                if specs:
+                    try:
+                        self._register_tools(specs)
+                    except Exception as e:  # noqa: BLE001 - a bad schema must not kill the task
+                        self.logger.warning("注册 Coopanion 工具失败：%s", e)
+                    return
+                self.logger.warning("Coopanion 的工具表是空的，稍后重试。")
+            except asyncio.CancelledError:
+                raise
+            except CoopanionError as e:
+                if "404" in str(e):
+                    self.logger.warning("Coopanion 扩展没有 /v1/tools（版本太旧）；工具没注册，插件和扩展要一起升级。")
+                    return
+                self.logger.debug("取 Coopanion 的工具表失败：%s", e)
+            except Exception as e:  # noqa: BLE001 - keep retrying, the bridge may still start
+                self.logger.debug("取 Coopanion 的工具表失败：%s", e)
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 60)
 
     async def _poll_coo(self) -> None:
-        """Coo 主动发来的消息：能发到会话就发，同时留一份给下一次工具调用。"""
+        """Coo 主动发来的消息：送到它所属的会话；送不到才留给下一次请求注入。"""
         interval = max(5, int(self.config.get("poll_seconds", 30) or 30))
-        umo = str(self.config.get("umo") or "").strip()
         while True:
             try:
                 await asyncio.sleep(interval)
@@ -96,11 +223,17 @@ class Main(star.Star):
                     text = str(msg.get("text") or "").strip()
                     if not text:
                         continue
-                    self._inbox.append(msg)
-                    if umo:
-                        await self.context.send_message(
-                            umo, MessageChain().message(f"{self.names['coo']}：{text}")
-                        )
+                    target = self._peer_umo or str(self.config.get("umo") or "").strip()
+                    delivered = False
+                    if target:
+                        try:
+                            delivered = await self.context.send_message(
+                                target, MessageChain().message(f"{self.names['coo']}：{text}")
+                            )
+                        except Exception as e:  # noqa: BLE001 - a bad umo must not drop the message
+                            self.logger.debug("Coo 的消息送到 %s 失败：%s", target, e)
+                    if not delivered:
+                        self._inbox.append(msg)
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001 - 轮询失败不该杀掉任务
@@ -122,6 +255,8 @@ class Main(star.Star):
         text = (message or "").strip()
         if not text:
             return "message 不能为空。"
+        # Replies from this exchange belong to the chat that asked for it, not to every session.
+        self._peer_umo = event.unified_msg_origin or self._peer_umo
         wait_ms = max(0, int(wait_seconds or 0)) * 1000
         try:
             out = await self.client.chat(text, wait_ms=wait_ms)
@@ -152,13 +287,14 @@ class Main(star.Star):
             f"{coo} 是用户电脑上的桌宠，它能看到那块屏幕、能动鼠标键盘，但它不在这台服务器上。\n"
             f"{user} 是使用这台电脑的人。\n"
             f"以「{coo}：」开头的消息是 {coo} 发来的，不是 {user} 说的，别搞混。\n"
-            f"需要看屏幕、点鼠标、打开程序时，用 send_msg_to_coo 交给 {coo}；它的回复就是工具的返回值。\n"
+            f"需要看屏幕、点鼠标、打开程序时，用 send_msg_to_coo 交给 {coo}；它可能直接回在工具返回值里，"
+            f"也可能稍后以「{coo}：…」进来。\n"
         )
         req.system_prompt = (req.system_prompt or "") + block
 
         # What Coo sent back since the last request rides along with this one, then is cleared:
         # it changes every turn, so it belongs in the user content rather than the system prompt.
-        if self._inbox:
+        if self._inbox and self._peer_umo and event.unified_msg_origin == self._peer_umo:
             pending, self._inbox = self._inbox, []
             lines = "\n".join(
                 f"{self.names['coo']}：{str(m.get('text') or '').strip()}"
@@ -177,62 +313,4 @@ class Main(star.Star):
             return mcp_types.CallToolResult(content=[_text(f"调用 Coopanion 失败：{e}")], isError=True)
         return _result(out)
 
-    # ---- 看 -----------------------------------------------------------------
 
-    @filter.llm_tool(name="coopanion_screen")
-    async def coopanion_screen(self, event: AstrMessageEvent, display: int = 1) -> mcp_types.CallToolResult:
-        """看一眼用户此刻的电脑屏幕（通过用户桌面上的 Coopanion）。
-
-        返回截图（已画出鼠标指针）、显示器尺寸、指针位置与前台窗口标题。之后的点击坐标都用这张截图的像素。
-        读取屏幕可能需要用户在桌面的确认框里点一下同意；被拒绝就别反复重试。
-
-        Args:
-            display(number): 显示器序号，1 是左起第一块；不确定就用 1
-        """
-        return await self._call("cua_screenshot", {"display": int(display or 1)})
-
-    @filter.llm_tool(name="coopanion_windows")
-    async def coopanion_windows(self, event: AstrMessageEvent) -> mcp_types.CallToolResult:
-        """列出用户屏幕上可见的窗口（标题、pid、位置尺寸、是否最小化、哪个在前台）。"""
-        return await self._call("cua_windows", {})
-
-    # ---- 动 -----------------------------------------------------------------
-
-    @filter.llm_tool(name="coopanion_click")
-    async def coopanion_click(self, event: AstrMessageEvent, x: int = 0, y: int = 0, button: str = "left", clicks: int = 1) -> mcp_types.CallToolResult:
-        """把鼠标移到截图的 (x, y) 并点击。点之前先 coopanion_screen 确认位置。
-
-        Args:
-            x(number): 横坐标（截图像素）
-            y(number): 纵坐标（截图像素）
-            button(string): left、right 或 middle，默认 left
-            clicks(number): 1 单击、2 双击、3 三击
-        """
-        return await self._call("cua_click", {"x": int(x), "y": int(y), "button": button, "clicks": int(clicks)})
-
-    @filter.llm_tool(name="coopanion_type")
-    async def coopanion_type(self, event: AstrMessageEvent, text: str = "") -> mcp_types.CallToolResult:
-        """在当前输入焦点输入文字（中文可用，与输入法状态无关；换行按一次回车）。输入前先点一下要输入的框。
-
-        Args:
-            text(string): 要输入的文字
-        """
-        return await self._call("cua_type", {"text": text})
-
-    @filter.llm_tool(name="coopanion_key")
-    async def coopanion_key(self, event: AstrMessageEvent, keys: str = "") -> mcp_types.CallToolResult:
-        """按一个键或组合键。组合键用 + 连，先后按用空格分隔，例如 "ctrl+s"、"alt+f4"、"ctrl+a delete"。
-
-        Args:
-            keys(string): 键名组合
-        """
-        return await self._call("cua_key", {"keys": keys})
-
-    @filter.llm_tool(name="coopanion_focus")
-    async def coopanion_focus(self, event: AstrMessageEvent, window: str = "") -> mcp_types.CallToolResult:
-        """把某个窗口切到前台（最小化的会先还原）。window 用 coopanion_windows 给的 handle，或其标题的一部分。
-
-        Args:
-            window(string): 窗口 handle（0x...）或标题片段
-        """
-        return await self._call("cua_focus", {"window": window})

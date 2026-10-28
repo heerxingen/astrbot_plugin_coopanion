@@ -49,7 +49,18 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get("authorization") != "Bearer " + TOKEN:
             self._unauthorized()
             return
-        payload = json.dumps({"ok": True, "world": "cua", "tools": ["cua_screenshot", "cua_windows"]}).encode()
+        if self.path == "/v1/tools":
+            payload = json.dumps({
+                "ok": True,
+                "protocol": 1,
+                "tools": [{
+                    "name": "cua_windows",
+                    "description": "list windows",
+                    "parameters": {"type": "object", "properties": {}},
+                }],
+            }).encode()
+        else:
+            payload = json.dumps({"ok": True, "world": "cua-bridge", "tools": ["cua_screenshot", "cua_windows"]}).encode()
         self.send_response(200)
         self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(payload)))
@@ -89,6 +100,7 @@ def main() -> int:
         client = CoopanionClient(bridge_json=str(bridge), timeout=10)
         out = asyncio.run(client.call_tool("cua_screenshot", {"display": 1}))
         health = asyncio.run(client.alive())
+        tools = asyncio.run(client.tools())
 
         bad = CoopanionClient(base="http://127.0.0.1:" + str(port), token="wrong", bridge_json="", timeout=5)
         try:
@@ -106,6 +118,7 @@ def main() -> int:
     assert out["text"] == FAKE["text"], out
     assert out["blobs"][0]["base64"] == "/9j/4AAQSkZJRg==", out
     assert health["tools"] == ["cua_screenshot", "cua_windows"], health
+    assert tools[0]["name"] == "cua_windows", tools
     assert refused, "错误令牌应当被 401 拒绝"
     print("OK: bridge.json 发现、路径、令牌、回执、401 全部符合预期")
     return 0

@@ -8,11 +8,12 @@
  * something else on this machine (docs/DEVELOPMENT.md, "托管自己的环境").
  *
  * The token is generated once per deployment into <dataDir>/cua/bridge.json, next to the port
- * actually bound (the configured port may be taken). That file is the discovery file: read it, send
- * the token in a header. Nothing is written outside the deployment directory.
+ * actually bound (the configured port may be taken), and reused on later starts. That file is the
+ * discovery file: read it, send the token in a header. Nothing is written outside the deployment
+ * directory.
  */
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { dirname } from 'node:path';
 import type { Logger } from 'cortico/core/types.ts';
@@ -23,7 +24,18 @@ export interface BridgeOutcome {
   blobs: Array<{ mime: string; name: string | null; base64: string }>;
 }
 
+export interface BridgeTool {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  tags?: readonly string[];
+}
+
 export interface BridgeOptions {
+  /** World id reported by /v1/health. */
+  world: string;
+  /** Tools a client may call, with the JSON Schema the model needs. */
+  tools: () => readonly BridgeTool[];
   /** Configured port; 0 picks a free one. */
   port: () => number;
   /** Names shown by GET /v1/health. */
@@ -76,7 +88,16 @@ export class Bridge {
       if (!ok) continue;
       this.server = server;
       this.bound = (server.address() as { port: number }).port;
-      this.token = randomBytes(32).toString('base64url');
+      // Reuse the deployment's token: an AstrBot configured with base + token must survive a
+      // Coopanion restart. Only a missing or corrupt state file mints a new one.
+      let previous = '';
+      try {
+        const saved = JSON.parse(readFileSync(this.opts.stateFile, 'utf8')) as { token?: unknown };
+        if (typeof saved.token === 'string' && saved.token.length >= 32) previous = saved.token;
+      } catch {
+        // first start, or the file was removed
+      }
+      this.token = previous || randomBytes(32).toString('base64url');
       mkdirSync(dirname(this.opts.stateFile), { recursive: true });
       writeFileSync(
         this.opts.stateFile,
@@ -94,7 +115,7 @@ export class Bridge {
     this.server = null;
     this.bound = 0;
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
-    try { rmSync(this.opts.stateFile, { force: true }); } catch { /* nothing to clean */ }
+    // Leave bridge.json in place: the token is the deployment's, not this run's.
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -111,7 +132,11 @@ export class Bridge {
     }
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     if (req.method === 'GET' && url.pathname === '/v1/health') {
-      json(res, 200, { ok: true, world: 'cua', port: this.bound, tools: this.opts.list() });
+      json(res, 200, { ok: true, protocol: 1, world: this.opts.world, port: this.bound, tools: this.opts.list() });
+      return;
+    }
+    if (req.method === 'GET' && url.pathname === '/v1/tools') {
+      json(res, 200, { ok: true, protocol: 1, tools: this.opts.tools() });
       return;
     }
     if (req.method === 'GET' && url.pathname === '/v1/identity') {

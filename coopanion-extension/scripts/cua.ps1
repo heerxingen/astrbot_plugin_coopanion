@@ -41,7 +41,37 @@ public static class CuaNative {
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, int dx, int dy, uint data, UIntPtr extra);
     [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+    [StructLayout(LayoutKind.Sequential)] public struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
+    [DllImport("user32.dll")] public static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+
+    // Unicode input: keybd_event's bScan is a byte, so a 16-bit code unit needs SendInput.
+    [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
+    [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
+    [StructLayout(LayoutKind.Sequential)] public struct HARDWAREINPUT { public uint uMsg; public ushort wParamL; public ushort wParamH; }
+    [StructLayout(LayoutKind.Explicit)] public struct INPUTUNION { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; [FieldOffset(0)] public HARDWAREINPUT hi; }
+    [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public INPUTUNION u; }
+    [DllImport("user32.dll", SetLastError = true)] public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+    public static bool SendUnicode(int code) {
+        INPUT[] inputs = new INPUT[2];
+        inputs[0].type = 1;
+        inputs[0].u.ki.wVk = 0;
+        inputs[0].u.ki.wScan = (ushort)code;
+        inputs[0].u.ki.dwFlags = 0x0004;
+        inputs[1] = inputs[0];
+        inputs[1].u.ki.dwFlags = 0x0006;
+        return SendInput(2, inputs, Marshal.SizeOf(typeof(INPUT))) == 2;
+    }
+    public static bool SendVirtualKey(ushort vk) {
+        INPUT[] inputs = new INPUT[2];
+        inputs[0].type = 1;
+        inputs[0].u.ki.wVk = vk;
+        inputs[0].u.ki.dwFlags = 0;
+        inputs[1] = inputs[0];
+        inputs[1].u.ki.dwFlags = 0x0002;
+        return SendInput(2, inputs, Marshal.SizeOf(typeof(INPUT))) == 2;
+    }
+
     public delegate bool EnumProc(IntPtr hWnd, IntPtr param);
     [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr param);
 }
@@ -157,6 +187,15 @@ switch ($Op) {
   }
 
 
+  'idle' {
+    $lii = New-Object CuaNative+LASTINPUTINFO
+    $lii.cbSize = [uint32][System.Runtime.InteropServices.Marshal]::SizeOf([type][CuaNative+LASTINPUTINFO])
+    $ok = [CuaNative]::GetLastInputInfo([ref]$lii)
+    $now = [uint32]([Environment]::TickCount -band 0xFFFFFFFF)
+    $idle = if ($ok) { ($now - $lii.dwTime) -band 0xFFFFFFFF } else { 0 }
+    Write-Json @{ ok = $true; idleMs = [int]$idle }
+  }
+
   'screenshot' {
     $shots = Get-Screens
     $index = if ($args_['display']) { [int]$args_['display'] } else { 1 }
@@ -267,23 +306,26 @@ switch ($Op) {
   }
 
   'type' {
-    $NL = [char]10
     $text = [string]$args_['text']
+    if (-not $text) { Write-Json @{ ok = $true; chars = 0 }; break }
+    # One process per call and a 30 s default timeout: keep a long paste bounded.
+    if ($text.Length -gt 2000) { Write-Json @{ ok = $false; error = 'text too long (max 2000 characters)' }; break }
+    $failed = $null
     foreach ($ch in $text.ToCharArray()) {
-      if ($ch -eq $NL) {
-        [CuaNative]::keybd_event(0x0D, 0, 0, [UIntPtr]::Zero)
-        [CuaNative]::keybd_event(0x0D, 0, 2, [UIntPtr]::Zero)
+      $code = [int]$ch
+      if ($code -eq 13) { continue }
+      if ($code -eq 10) {
+        [void][CuaNative]::SendVirtualKey(0x0D)
+        Start-Sleep -Milliseconds 15
         continue
       }
-      $code = [int][char]$ch
-      [CuaNative]::keybd_event(0, [byte]($code -band 0xFF), 4, [UIntPtr]::Zero)
-      [CuaNative]::keybd_event(0, [byte]($code -band 0xFF), 6, [UIntPtr]::Zero)
-      if ($code -gt 0xFF) {
-        [CuaNative]::keybd_event(0, [byte](($code -shr 8) -band 0xFF), 4, [UIntPtr]::Zero)
-        [CuaNative]::keybd_event(0, [byte](($code -shr 8) -band 0xFF), 6, [UIntPtr]::Zero)
+      if (-not [CuaNative]::SendUnicode($code)) {
+        $failed = 'SendInput failed for U+' + $code.ToString('X4') + ' (Win32 ' + [System.Runtime.InteropServices.Marshal]::GetLastWin32Error() + ')'
+        break
       }
-      Start-Sleep -Milliseconds 8
+      Start-Sleep -Milliseconds 5
     }
+    if ($failed) { Write-Json @{ ok = $false; error = $failed }; break }
     Write-Json @{ ok = $true; chars = $text.Length }
   }
 

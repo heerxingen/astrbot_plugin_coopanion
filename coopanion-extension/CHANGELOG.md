@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.4.0 — 2026-10-28
+
+### 新增
+
+- `cua_delegate` / `cua_job`：把一个多步电脑任务交给 Coo 的模型在本机做；`allow_act=false` 时
+  任务里只能截图/列窗口，动作工具会被拒绝。任务用 `cua.task` 事件进入 Coo 的会话。
+- `worlds.cua-bridge.chat.*`：Coo 直接 POST AstrBot 的 `/api/v1/chat`（`chat` scope API Key、
+  `username=coo`、独立 session），回复通过 SSE 取回后作为新消息进 Coo 的会话，下一轮再回；
+  `chat.configId` 可选指定 AstrBot 配置文件，留空走 default。没填 URL 时仍走信箱。
+- 确认框改成置顶的独立窗口（之前 MessageBox 可能被其他窗口挡住，60 秒无操作按拒绝）；
+  打不开时写日志并按“确认框没能显示”报错，不再伪装成使用者点了否。
+- 读/写分档 `askRead` / `askAct`，动键鼠前等使用者停手（`actIdleMs` / `actWaitMs`）。
+
+### 变更
+
+- World id 从 `cua` 改为 `cua-bridge`（配置段 `worlds.cua-bridge.*`）；`worlds.cua` 会被 Coopanion
+  自己的迁移并进桌宠并删除，升级后需要重新启用并重填设置。`bridge.json` 仍在 `<部署目录>/data/cua/`。
+- `cua_click` 接受 `display`，按最近一次 `cua_screenshot` 的坐标帧把截图像素换算回屏幕坐标；
+  没有截图或坐标越界直接失败，不再默认点左上角。
+- `describe.json` 改为从 `CUA.describe` 生成，包含 `cua.message` 与 `cua.task` 事件。
+- 桥接令牌首次生成后重启复用；`bridge.json` 不再在停止时删除。
+- `names.user` 留空时自动读 `worlds.desktop-pet.user`（启动引导里填的名字），不再固定叫「使用者」；
+  本 World 的 `names.user` 仍然优先。
+- 新增 `GET /v1/tools`：返回 6 个 `cua_*` 工具的名字、描述、JSON Schema 与 tags；`/v1/health`
+  带 `protocol: 1`，插件按它握手。
+
+### 修复
+
+- 截图被缩放到 1280×800 后点击坐标没有反算，点击会落偏；多屏还会整体偏到第一块屏。
+- `cua_type` 把 UTF-16 码元拆成两个 `keybd_event` 事件，中文会被拆成两个字符；改用 `SendInput`。
+- `describeShot` 的物理尺寸固定取第一块屏，第二块屏会报错主屏尺寸。
+
 ## 0.3.1 — 2026-10-27
 
 ### 变更

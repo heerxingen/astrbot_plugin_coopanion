@@ -1,6 +1,6 @@
 # 设计：AstrBot × Coopanion 的工具桥
 
-> 第一版方案是改 Coopanion 内置桌宠 World 的 `invoke()`（见 `../prototype/coopanion-bridge/`）。
+> 第一版方案是改 Coopanion 内置桌宠 World 的 `invoke()`（见 `../../coopanion-astrbot-plugin/prototype/coopanion-bridge/`）。
 > 那份仍留在仓库里做对照，但**推荐方案已经换成 World 扩展** `cortico-world-cua`：
 > 同样的工具、同样的权限语义，不自带补丁，走产品现成的扩展安装流程。
 

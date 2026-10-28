@@ -90,7 +90,7 @@ World = 一个可插拔扩展单元，提供 `defaults() / create() / describe()
 **今天做不到**：截图、列窗口、鼠标键盘 —— 没有任何端点，CUA 只活在「模型 → 工具」链路里。
 
 所以「让 AstrBot 通过 Coopanion 看电脑」必须给 Coopanion 打一个小补丁：把 CUA 挂到已有的
-面板方法上。见 `../prototype/coopanion-bridge/PATCH.md`。
+面板方法上。见 `../../coopanion-astrbot-plugin/prototype/coopanion-bridge/PATCH.md`。
 
 ## 6. 三条备选路线，各自的真实代价
 

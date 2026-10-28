@@ -37,6 +37,8 @@
 | `token` | 本机 `<部署>/data/cua/bridge.json` 里的 `token` |
 | `verify_tls` | 有证书就保持 `true` |
 
+先在插件配置的「部署方式」里选 **服务器 + SSH 隧道**，`base` / `token` 才会显示。
+
 然后从下面三种隧道里挑一种。
 
 ### A. SSH 反向隧道（最省事，不需要域名）
@@ -50,6 +52,15 @@ ssh -N -R 127.0.0.1:17901:127.0.0.1:17901 user@your-server
 
 服务器上的 AstrBot 就访问 `http://127.0.0.1:17901`。
 `-R` 默认只绑服务器的回环地址，正好不给外人开门；要长期跑就用 `autossh` 或 systemd 用户服务。
+
+如果 Coo 还要直连 AstrBot 的 OpenAPI，同一条 SSH 再加一个本地转发：
+
+`@bash
+ssh -N -L 127.0.0.1:6185:127.0.0.1:6185 -R 127.0.0.1:17901:127.0.0.1:17901 user@your-server
+`@
+
+- `-L 6185`：本机 6185 → 服务器 AstrBot 6185；Coo 的 `chat.astrbotUrl` 填 `http://127.0.0.1:6185`。
+- `-R 17901`：服务器 17901 → 本机 Coo 桥接 17901；插件 `base` 填 `http://127.0.0.1:17901`。
 
 ### B. frp（已有 frps 的话）
 
@@ -70,7 +81,7 @@ remotePort = 17901
 适合你想给 AstrBot 一个 `https://coopanion.example.com` 的情况。两条硬性要求：
 
 1. **加 Host 白名单**：请求到 Coopanion 时 `Host` 是公网名字，而桥接默认只认回环名。
-   在 Coopanion 设置里把 `worlds.cua.bridgeHosts` 改成例如
+   在 Coopanion 设置里把 `worlds.cua-bridge.bridgeHosts` 改成例如
    `127.0.0.1,localhost,[::1],coopanion.example.com`。
 2. 反代要原样转发 `Authorization` 头，别缓存、别记录 body。
 
@@ -89,8 +100,8 @@ coopanion.example.com {
 node -e "const j=require('C:/Users/you/.coopanion/default/data/cua/bridge.json');console.log(j.token)"
 `@
 
-每次 Coopanion 启动令牌都会换新，所以插件里的 `token` 过期后要重抄一次（或者重启 Coopanion 后
-把它同步到服务器环境中，别写进会外泄的地方）。
+令牌首次生成后会复用，重启 Coopanion 不会换新，所以插件里的 `token` 配一次就行。
+只有 `bridge.json` 被删掉或损坏时才会重新生成；那时重抄一次。
 
 ## 安全清单
 
@@ -98,7 +109,7 @@ node -e "const j=require('C:/Users/you/.coopanion/default/data/cua/bridge.json')
 |---|---|
 | 桥接保持 `127.0.0.1` | 远端通过 SSH/frp/反代进来，本机不开放入站 |
 | 隧道那一端不要绑 `0.0.0.0` | 否则等于把"控制我桌面"的接口开到公网 |
-| `worlds.cua.exposeToBot` 保持关闭 | **默认就是这样**：Coo 看不到、调不到这些工具，只有桥接能用 |
+| `worlds.cua-bridge.exposeToBot` 保持关闭 | **默认就是这样**：Coo 看不到、调不到这些工具，只有桥接能用 |
 | `ask` 别设成 `never-ask` | 远程调用时你至少还能在桌面上看到确认框 |
 | token 当密码对待 | 拿到它 = 能截屏、能点鼠标、能打字 |
 
@@ -108,26 +119,21 @@ node -e "const j=require('C:/Users/you/.coopanion/default/data/cua/bridge.json')
 |---|---|
 | `连不上 … 桥接`（远程） | 隧道没起；或 AstrBot 在容器里，`127.0.0.1` 指容器自己 |
 | `421` | 走了反代但没把公网域名加进 `bridgeHosts` |
-| `401` | token 过期（Coopanion 重启过），重抄 |
+| `401` | `bridge.json` 被删过/换过，token 已重新生成；重抄 |
 | 能连但很慢 | 每次截图都要传回 JPEG；把 `screenshot.maxWidth/Height/quality` 调小 |
 
 ## 两个 bot 聊天时隧道的方向
 
 `@
 AstrBot ──HTTP──▶ 127.0.0.1:17901（隧道）──▶ Coo 的桥接        ← 已有，走 base + token
-Coo ──HTTP──▶ AstrBot 的 /api/plug/...                         ← 需要反向可达
+Coo ──HTTP──▶ AstrBot 的 /api/v1/chat（OpenAPI）                 ← 填了地址和 Key 就走这条
 `@
 
-第二条（Coo 主动找 AstrBot）在只有"服务器 ← 你的 PC"这条隧道时是不通的：服务器没有公网入口。
-两种解法：
-
-1. **信箱（默认，零配置）**：`worlds.cua.chat.astrbotUrl` 留空，Coo 的消息进信箱，
-   AstrBot 按 `poll_seconds` 取。延迟就是一个轮询周期。
-2. **反向可达**：给 AstrBot 一个 Coo 能访问的地址（同样的隧道再来一条，或 AstrBot 本身有公网域名），
-   填进 `worlds.cua.chat.astrbotUrl`，例如
-   `https://your-host/api/plug/astrbot_plugin_coopanion/coo/message`，
-   再把 `worlds.cua.chat.token` 与插件里的 `coo_token` 填成一样。
-   注意插件这个路由要过 Dashboard 的鉴权中间件，实际可用性取决于你的部署方式——不确定就用信箱。
+第二条（Coo 主动找 AstrBot）在 Coopanion 的 `worlds.cua-bridge.chat.*` 里填 AstrBot 的 OpenAPI
+地址和 `chat` scope 的 API Key，就直接 POST `/api/v1/chat`（`username=coo`、独立 `session_id`），
+回复通过 SSE 取回后作为新消息送进 Coo 的会话，下一轮再回；不需要轮询。
+没填时走**信箱**：Coo 把消息放进 outbox，插件按 `poll_seconds` 用 `GET /v1/mailbox` 取走，
+再送进 `umo`；插件保留信箱作为 OpenAPI 不可达时的兜底。
 
 ## 编码
 

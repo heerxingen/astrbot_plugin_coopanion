@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 
-PLUGIN_FILES = ["main.py", "client.py", "metadata.yaml", "_conf_schema.json", "requirements.txt", "LICENSE"]
+PLUGIN_FILES = ["main.py", "client.py", "metadata.yaml", "_conf_schema.json", "requirements.txt", "README.md", "CHANGELOG.md", "LICENSE"]
 PLUGIN_DIRS = ["views"]
 
 EXT_FILES = ["package.json", "describe.json", "README.md", "CHANGELOG.md"]
@@ -30,13 +30,15 @@ INSTALL = """astrbot_plugin_coopanion {version}
 
 2) 另一半在 Coopanion 上：把 cortico-world-cua-{version}.zip 解压，
    在 Coopanion 设置 -> 扩展 -> 手动安装 -> 本机目录，选解压出来的 cortico-world-cua 文件夹，
-   重启进程，再到 World 总览启用 CUA。
+   重启进程，再到 World 总览启用 CUA Bridge。
+   从 0.3.x 升级时 World id 已改成 cua-bridge，config 里的 ask/names 需要重填。
 
 3) 插件配置（Dashboard -> 插件 -> 本插件）：
-     bridge_json   Coopanion 的 cua/bridge.json 路径（同机部署）
-     或 base+token  AstrBot 在服务器上时用（见 docs/remote.md）
+     部署方式      先选「同机部署」或「服务器 + SSH 隧道」，下面只显示对应字段
+     同机部署      bridge_json = Coopanion 的 data/cua/bridge.json 路径
+     服务器部署    base = http://127.0.0.1:17901（服务器上由 ssh -R 17901:127.0.0.1:17901 转出）
+                   token = 你电脑上 data/cua/bridge.json 里的 token
      umo           Coo 的消息投递到哪个会话
-     coo_token     与 worlds.cua.chat.token 一致（可选，用 webhook 直连时）
 
 完整说明：https://github.com/heerxingen/astrbot_plugin_coopanion
 """
